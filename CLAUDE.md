@@ -57,6 +57,7 @@ Language IDs currently in use: 10–20. New languages should use 21+.
 **Files created**:
 - `vendor/pforth/` — git submodule (pforth, BSD-0 license)
 - `cmake/forth.cmake` — build integration
+- `cmake/pfdicdat.h` — committed copy of pforth's pre-compiled dictionary (see below)
 - `src/api/forth.c` — VM lifecycle + TIC-80 API binding (replaces pfcustom.c)
 - `src/api/forth_io.c` — pforth I/O redirected to TIC-80 trace callback
 - `build/assets/forthdemo.tic.dat` — demo cartridge included as a C array in `forth.c`
@@ -67,10 +68,23 @@ Language IDs currently in use: 10–20. New languages should use 21+.
 
 **Callback convention**: TIC-80 looks for named Forth words (`TIC`, `BOOT`, `SCN`, `BDR`, `MENU`) in the dictionary and calls them each frame.
 
-### Regenerating forthdemo.tic.dat
+### Committed generated files
 
-`build/assets/forthdemo.tic.dat` is committed in the repo and must be regenerated whenever `demos/forthdemo.fth` changes (requires `prj2cart` + `bin2txt`, built with `BUILD_TOOLS=ON`):
+Two files are generated from sources but committed to the repo so CI never needs to regenerate them:
 
+| File | Source | Regenerate when |
+|------|--------|-----------------|
+| `cmake/pfdicdat.h` | pforth submodule | `vendor/pforth` is updated |
+| `build/assets/forthdemo.tic.dat` | `demos/forthdemo.fth` | that file changes |
+
+**Regenerating `cmake/pfdicdat.h`** (after updating pforth):
+```bash
+cd vendor/pforth && cmake . && make pforth_dic_header
+cp vendor/pforth/csrc/pfdicdat.h cmake/pfdicdat.h
+git add cmake/pfdicdat.h
+```
+
+**Regenerating `build/assets/forthdemo.tic.dat`** (requires `BUILD_TOOLS=ON`):
 ```bash
 prj2cart demos/forthdemo.fth /tmp/forthdemo.tic
 bin2txt  /tmp/forthdemo.tic build/assets/forthdemo.tic.dat -z
