@@ -46,6 +46,14 @@ if(BUILD_WITH_FORTH)
     endif()
 
     # -------------------------------------------------------------------------
+    # forthdemo.tic.dat — demo cartridge for 'new forth' command.
+    # Source: demos/forthdemo.fth
+    # Regenerate (after building prj2cart and bin2txt):
+    #   prj2cart demos/forthdemo.fth /tmp/forthdemo.tic
+    #   bin2txt  /tmp/forthdemo.tic build/assets/forthdemo.tic.dat -z
+    # -------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
     # TIC-80 forth library
     # -------------------------------------------------------------------------
     set(FORTH_SRC
