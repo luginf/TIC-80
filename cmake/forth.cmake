@@ -67,9 +67,9 @@ if(BUILD_WITH_FORTH)
 
     if(NOT BUILD_STATIC)
         set_target_properties(forth PROPERTIES PREFIX "")
-    else()
-        target_compile_definitions(forth INTERFACE TIC_BUILD_WITH_FORTH=1)
     endif()
+
+    target_compile_definitions(forth INTERFACE TIC_BUILD_WITH_FORTH=1)
 
     target_compile_definitions(forth PRIVATE
         PF_STATIC_DIC       # load the pre-compiled dictionary from pfdicdat.h
