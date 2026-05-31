@@ -76,6 +76,11 @@ void forthClearOutputBuffer(void)
     gOutLen = 0;
 }
 
+void forthFlushOutput(void)
+{
+    flushOut();
+}
+
 // ---- pforth terminal I/O callbacks ------------------------------------------
 
 int sdTerminalOut(char c)
@@ -120,74 +125,5 @@ cell_t sdSleepMillis(cell_t msec)
     return 0;
 }
 
-// ---- pforth file I/O stubs (PF_NO_FILEIO) -----------------------------------
-// Cartridges run from embedded memory; no filesystem access is needed.
-
-FileStream* PF_STDIN  = NULL;
-FileStream* PF_STDOUT = NULL;
-
-FileStream* sdOpenFile(const char* FileName, const char* Mode)
-{
-    (void)FileName; (void)Mode;
-    return NULL;
-}
-
-cell_t sdCloseFile(FileStream* stream)
-{
-    (void)stream;
-    return -1;
-}
-
-cell_t sdReadFile(void* ptr, cell_t size, int32_t nItems, FileStream* stream)
-{
-    (void)ptr; (void)size; (void)nItems; (void)stream;
-    return 0;
-}
-
-cell_t sdWriteFile(void* ptr, cell_t size, int32_t nItems, FileStream* stream)
-{
-    (void)ptr; (void)size; (void)nItems; (void)stream;
-    return 0;
-}
-
-cell_t sdFlushFile(FileStream* stream)
-{
-    (void)stream;
-    return -1;
-}
-
-cell_t sdSeekFile(FileStream* stream, file_offset_t pos, int32_t mode)
-{
-    (void)stream; (void)pos; (void)mode;
-    return -1;
-}
-
-file_offset_t sdTellFile(FileStream* stream)
-{
-    (void)stream;
-    return -1;
-}
-
-cell_t sdRenameFile(const char* oldName, const char* newName)
-{
-    (void)oldName; (void)newName;
-    return -1;
-}
-
-cell_t sdDeleteFile(const char* fileName)
-{
-    (void)fileName;
-    return -1;
-}
-
-ThrowCode sdResizeFile(FileStream* stream, uint64_t size)
-{
-    (void)stream; (void)size;
-    return -1;
-}
-
-cell_t sdInputChar(FileStream* stream)
-{
-    (void)stream;
-    return -1;
-}
+// File I/O stubs are provided by pf_io.c when PF_NO_FILEIO is defined.
+// This file only needs to provide the terminal I/O functions.

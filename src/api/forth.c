@@ -71,6 +71,40 @@ static PForthTask  gForthTask = NULL;
 #define FORTH_STR_BUF 1024
 static char gStrBuf[FORTH_STR_BUF];
 
+// pfInterpretText is limited to TIB_SIZE (256) characters per call, but pforth
+// preserves compiler state (gVarState, dictionary position) across calls, so
+// feeding one line at a time works correctly for multi-line definitions.
+static ThrowCode forthInterpretLines(const char* source)
+{
+    char line[TIB_SIZE];
+
+    const char* p = source;
+    while (*p)
+    {
+        const char* end = strchr(p, '\n');
+        if (!end) end = p + strlen(p);
+
+        // Strip trailing CR so Windows line endings (\r\n) work too.
+        const char* lineEnd = end;
+        if (lineEnd > p && *(lineEnd - 1) == '\r') lineEnd--;
+
+        size_t len = (size_t)(lineEnd - p);
+        if (len >= TIB_SIZE) len = TIB_SIZE - 1;
+
+        memcpy(line, p, len);
+        line[len] = '\0';
+
+        if (len > 0)
+        {
+            ThrowCode r = pfInterpretText(line);
+            if (r != 0) return r;
+        }
+
+        p = (*end == '\n') ? end + 1 : end;
+    }
+    return 0;
+}
+
 static const char* forthCountedToC(cell_t addr, cell_t len)
 {
     if (len < 0) len = 0;
@@ -846,20 +880,30 @@ static void callForthWord(tic_mem* tic, const char* name, s32 param, bool hasPar
     tic_core* core = (tic_core*)tic;
     if (!core->currentVM) return;
 
-    cell_t depth = pfGetStackDepth();
+    cell_t depthBefore = pfGetStackDepth();
+
     if (hasParam)
-    {
         pfPushToStack((cell_t)param);
-        depth++;  // account for the param we pushed
-    }
 
     forthClearOutputBuffer();
     ThrowCode result = pfExecIfDefined(name);
     if (result != 0)
         reportForthError(core, result);
 
-    // Expected depth after the word: same as before the call (param consumed).
-    checkStackBalance(core, depth - (hasParam ? 1 : 0), name);
+    cell_t depthAfter = pfGetStackDepth();
+
+    // If the word was not defined, pfExecIfDefined is a no-op and the pushed
+    // param is still on the stack (depthAfter == depthBefore + 1).  That is
+    // not a user error — silently clean up and return.
+    bool paramLeaked = hasParam && (depthAfter == depthBefore + 1);
+    if (paramLeaked)
+    {
+        pfPopFromStack();
+        return;
+    }
+
+    // Any other imbalance is a real stack error in the user's word.
+    checkStackBalance(core, depthBefore, name);
 }
 
 // =============================================================================
@@ -872,14 +916,12 @@ static void closeForth(tic_mem* tic)
     if (core->currentVM)
     {
         forthTermIO();
+        // pfTerminate() frees both the current task and the dictionary.
+        // Do NOT call pfDeleteTask separately — that would double-free.
         pfTerminate();
-        if (gForthTask)
-        {
-            pfDeleteTask(gForthTask);
-            gForthTask = NULL;
-        }
+        gForthTask     = NULL;
         core->currentVM = NULL;
-        gForthCore = NULL;
+        gForthCore     = NULL;
     }
 }
 
@@ -892,30 +934,27 @@ static bool initForth(tic_mem* tic, const char* code)
     forthInitIO(core->data);
     pfSetQuiet(1);
 
-    // Load the pre-compiled ANS Forth standard dictionary.
-    PForthDictionary dict = pfLoadStaticDictionary();
-    if (!dict)
+    // pfInitialize(NULL, 0, NULL):
+    //   - calls pfInitSystem() which sets gVarBase=10 and inits the allocator
+    //   - creates the execution task and calls pfSetCurrentTask
+    //   - loads the pre-compiled static dictionary (pfdicdat.h)
+    //   - runs AUTO.INIT if defined (no-op in standard pforth)
+    // Using pfInitialize instead of the individual calls is required because
+    // pfInitSystem() is private to pf_core.c.
+    ThrowCode initResult = pfInitialize(NULL, 0, NULL);
+    if (initResult != 0)
     {
         if (core->data)
-            core->data->error(core->data->data,
-                              "Forth: failed to load standard dictionary");
+            core->data->error(core->data->data, "Forth: pfInitialize failed");
+        gForthCore = NULL;
+        forthTermIO();
         return false;
     }
 
-    // Create the execution task (data stack + return stack).
-    gForthTask = pfCreateTask(512, 512);
-    if (!gForthTask)
-    {
-        pfDeleteDictionary(dict);
-        if (core->data)
-            core->data->error(core->data->data,
-                              "Forth: failed to create task");
-        return false;
-    }
-    pfSetCurrentTask(gForthTask);
+    gForthTask      = pfGetCurrentTask();
     core->currentVM = gForthTask;
 
-    // Add TIC-80 API words to the live dictionary.
+    // Add TIC-80 API words to the already-loaded dictionary.
     if (CompileCustomFunctions() < 0)
     {
         closeForth(tic);
@@ -927,7 +966,7 @@ static bool initForth(tic_mem* tic, const char* code)
 
     // Interpret the cartridge source code.
     forthClearOutputBuffer();
-    ThrowCode result = pfInterpretText((char*)code);
+    ThrowCode result = forthInterpretLines(code);
     if (result != 0)
     {
         reportForthError(core, result);
@@ -938,9 +977,14 @@ static bool initForth(tic_mem* tic, const char* code)
     return true;
 }
 
+// Flush any output left in the I/O buffer (e.g. from '.' without CR) at the
+// end of each TIC frame so it appears promptly in the console.
+extern void forthFlushOutput(void);
+
 static void callForthTick(tic_mem* tic)
 {
     callForthWord(tic, TIC_FN,  0,     false);
+    forthFlushOutput();  // flush '.' output that has no trailing CR
 }
 
 static void callForthBoot(tic_mem* tic)
@@ -975,7 +1019,7 @@ static void evalForth(tic_mem* tic, const char* code)
             return;
     }
     forthClearOutputBuffer();
-    ThrowCode result = pfInterpretText((char*)code);
+    ThrowCode result = forthInterpretLines(code);
     if (result != 0)
         reportForthError(core, result);
 }
@@ -1068,10 +1112,13 @@ static const char* ForthAPIKeywords[] = {
 };
 
 // =============================================================================
-// Demo cartridge placeholders (will be replaced by actual .tic.dat files)
 // =============================================================================
 
-static const u8 DemoRom[] = { 0 };
+static const u8 DemoRom[] =
+{
+    #include "../build/assets/forthdemo.tic.dat"
+};
+
 static const u8 MarkRom[] = { 0 };
 
 // =============================================================================
@@ -1115,6 +1162,6 @@ TIC_EXPORT const tic_script EXPORT_SCRIPT(Forth) =
     .api_keywords     = ForthAPIKeywords,
     .api_keywordsCount = COUNT_OF(ForthAPIKeywords),
 
-    .demo = { DemoRom, 0, "forthdemo.tic" },
+    .demo = { DemoRom, sizeof DemoRom, "forthdemo.tic" },
     .mark = { MarkRom, 0, "forthmark.tic" },
 };
