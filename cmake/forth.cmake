@@ -39,10 +39,23 @@ if(BUILD_WITH_FORTH)
     set(PFORTH_DICDAT ${PFORTH_DIR}/pfdicdat.h)
 
     if(NOT EXISTS ${PFORTH_DICDAT})
-        message(FATAL_ERROR
-            "Forth: pfdicdat.h not found at ${PFORTH_DICDAT}.\n"
-            "Generate it by running:\n"
-            "  cd ${THIRDPARTY_DIR}/pforth && cmake . && make pforth_dic_header")
+        message(STATUS "Forth: pfdicdat.h not found — bootstrapping pforth to generate it...")
+        set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -S "${THIRDPARTY_DIR}/pforth" -B "${_PFORTH_BOOTSTRAP_DIR}"
+            RESULT_VARIABLE _pforth_cfg_result
+            OUTPUT_QUIET ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}" --target pforth_dic_header
+            RESULT_VARIABLE _pforth_build_result
+        )
+        if(NOT EXISTS ${PFORTH_DICDAT})
+            message(FATAL_ERROR
+                "Forth: failed to generate pfdicdat.h at ${PFORTH_DICDAT}.\n"
+                "Try manually: cd ${THIRDPARTY_DIR}/pforth && cmake . && make pforth_dic_header")
+        endif()
+        message(STATUS "Forth: pfdicdat.h generated successfully")
     endif()
 
     # -------------------------------------------------------------------------

@@ -80,27 +80,54 @@ Each language opt-in flag follows the pattern `BUILD_WITH_<LANG>`. See `cmake/ja
 
 To build all languages at once: `-DBUILD_WITH_ALL=ON`.
 
-### PRO + CRT build
+### Build profiles
 
-The preferred local build uses the PRO version with CRT shader support:
+**Prerequisite** — initialize submodules needed for a full build:
+
+```bash
+git submodule update --init --depth 1 vendor/sdl-gpu vendor/mruby vendor/wren \
+  vendor/squirrel vendor/janet vendor/moonscript vendor/yuescript \
+  vendor/quickjs vendor/wasm3 vendor/lpeg vendor/pocketpy
+```
+
+`BUILD_SDLGPU=ON` enables `CRT_SHADER_SUPPORT` (`cmake/studio.cmake`), adding the CRT monitor option in the main menu. `BUILD_STATIC=ON` compiles all languages into the binary (no separate `.so` files needed at runtime).
+
+#### Upstream-compatible (mirrors CI)
+
+Regular build (what the upstream Linux CI runs):
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SDLGPU=On -DBUILD_STATIC=ON -DBUILD_WITH_ALL=ON
+cmake --build . --parallel
+```
+
+PRO build (what the upstream Linux PRO CI runs):
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel -DBUILD_SDLGPU=On -DBUILD_PRO=On -DBUILD_WITH_ALL=ON
+cmake --build . --parallel
+```
+
+#### Local perso/ build (PRO + CRT + static + all languages)
 
 ```bash
 mkdir build_pro && cd build_pro
-cmake .. -DBUILD_PRO=ON -DBUILD_WITH_FORTH=ON -DBUILD_SDLGPU=ON -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) tic80
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_PRO=ON -DBUILD_SDLGPU=ON -DBUILD_STATIC=ON -DBUILD_WITH_ALL=ON
+cmake --build . --parallel
 cp bin/tic80 ../perso/tic80-pro
-cp bin/forth.so ../perso/
 ```
 
-`BUILD_SDLGPU=ON` enables `CRT_SHADER_SUPPORT` (defined in `cmake/studio.cmake`), which activates the CRT monitor filter option in the main menu. The `vendor/sdl-gpu` submodule must be initialized first:
+#### Minimal build (Lua + Forth only)
 
 ```bash
-git submodule update --init --depth 1 vendor/sdl-gpu
+mkdir build_minimal && cd build_minimal
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_PRO=ON -DBUILD_SDLGPU=ON -DBUILD_STATIC=ON \
+  -DBUILD_WITH_FORTH=ON
+cmake --build . --parallel
+cp bin/tic80 ../perso/tic80-pro
 ```
 
-**Dynamic language loading**: with `BUILD_STATIC=OFF` (default on Linux), each language is a separate `.so` loaded at startup via `dlopen` from the same directory as the binary (`fs_appfolder()` in `src/studio/studio.c`). `forth.so` must therefore sit next to `tic80-pro` in `perso/`. The static script registration in `src/script.c` is only active under `TIC_RUNTIME_STATIC`.
-
-The compiled files live in `perso/` (excluded from git via `.gitignore`).
+The compiled binary lives in `perso/tic80-pro` (excluded from git via `.gitignore`).
 
 ## Code style
 
