@@ -59,13 +59,23 @@ Language IDs currently in use: 10–20. New languages should use 21+.
 - `cmake/forth.cmake` — build integration
 - `src/api/forth.c` — VM lifecycle + TIC-80 API binding (replaces pfcustom.c)
 - `src/api/forth_io.c` — pforth I/O redirected to TIC-80 trace callback
-- `build/assets/forthdemo.tic.dat` + `forthmark.tic.dat` — demo cartridges (TODO)
+- `build/assets/forthdemo.tic.dat` — demo cartridge included as a C array in `forth.c`
 
 **Build status**: compiles cleanly with `-DBUILD_WITH_FORTH=ON`.
 
 **TIC-80 API binding pattern**: each TIC-80 API function (print, cls, spr, map, ...) is registered as a primitive Forth word. The ~50 API functions are listed in `TIC_API_LIST` macro in `src/api.h`.
 
 **Callback convention**: TIC-80 looks for named Forth words (`TIC`, `BOOT`, `SCN`, `BDR`, `MENU`) in the dictionary and calls them each frame.
+
+### Regenerating forthdemo.tic.dat
+
+`build/assets/forthdemo.tic.dat` is committed in the repo and must be regenerated whenever `demos/forthdemo.fth` changes (requires `prj2cart` + `bin2txt`, built with `BUILD_TOOLS=ON`):
+
+```bash
+prj2cart demos/forthdemo.fth /tmp/forthdemo.tic
+bin2txt  /tmp/forthdemo.tic build/assets/forthdemo.tic.dat -z
+git add build/assets/forthdemo.tic.dat
+```
 
 ## Build system
 
