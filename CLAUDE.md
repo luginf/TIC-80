@@ -68,6 +68,26 @@ Language IDs currently in use: 10–20. New languages should use 21+.
 
 **Callback convention**: TIC-80 looks for named Forth words (`TIC`, `BOOT`, `SCN`, `BDR`, `MENU`) in the dictionary and calls them each frame.
 
+### Writing and loading .fth cartridges
+
+A `.fth` file loaded with `load pong.fth` in the TIC-80 console **must contain the binary sections** (PALETTE, TILES, WAVES, SFX, TRACKS, …) that TIC-80 writes when saving. A hand-crafted text file with only Forth code will load silently without error but `TIC` will never execute — the cart appears as a black screen.
+
+**Correct workflow**:
+1. `new forth` in the console
+2. Paste the Forth code in the code editor
+3. `save pong.fth` — TIC-80 writes the file with all required binary sections
+4. Future `load pong.fth` will work
+
+`perso/template.fth` contains the minimal binary sections skeleton to copy when creating new carts by hand.
+
+**TIC-80 Forth API quick reference** (all words are UPPERCASE):
+- `( color -- ) CLS` — clear screen
+- `( x y w h color -- ) RECT` / `RECTB` — filled / outline rectangle
+- `( c-addr u x y color fixed scale alt -- width ) PRINT` — draw text; use `S>D <# #S #>` to convert numbers to counted strings
+- `( id -- pressed ) BTN` — button state (0-7 player1, 8-15 player2)
+- `( id hold repeat -- pressed ) BTNP` — button press with repeat
+- `( c-addr u color -- ) TRACE` — console output
+
 ### Committed generated files
 
 Two files are generated from sources but committed to the repo so CI never needs to regenerate them:
