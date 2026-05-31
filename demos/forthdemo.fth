@@ -1,7 +1,56 @@
 \ title:  Hello Forth
 \ author: TIC-80
 \ desc:   Forth demo - change the word called in TIC to switch example
+\ license: MIT License
 \ script: forth
+\
+\ -- TIC-80 Forth API --------------------------------------------------
+\ Drawing
+\   CLS   ( color -- )
+\   PIX!  ( x y color -- )        set pixel
+\   PIX   ( x y -- color )        get pixel
+\   LINE  ( x0 y0 x1 y1 color -- )
+\   RECT  ( x y w h color -- )    filled rectangle
+\   RECTB ( x y w h color -- )    rectangle border
+\   CIRC  ( x y r color -- )      filled circle
+\   CIRCB ( x y r color -- )      circle border
+\   ELLI  ( x y a b color -- )    filled ellipse
+\   ELLIB ( x y a b color -- )    ellipse border
+\   TRI   ( x1 y1 x2 y2 x3 y3 color -- )  filled triangle
+\   TRIB  ( x1 y1 x2 y2 x3 y3 color -- )  triangle border
+\   CLIP  ( x y w h -- )    CLIP0 ( -- )  reset clip region
+\ Text
+\   PRINT ( c-addr u x y color fixed scale alt -- width )
+\   FONT  ( c-addr u x y chroma cw ch fixed scale alt -- width )
+\   TRACE ( c-addr u color -- )
+\ Sprites & map
+\   SPR   ( id x y colorkey scale flip rotate w h -- )
+\   MAP   ( cellx celly cellw cellh sx sy colorkey scale -- )
+\   MGET  ( x y -- tile )    MSET  ( x y tile -- )
+\   FGET  ( id flag -- bool )  FSET ( id flag val -- )
+\ Input
+\   BTN   ( id -- pressed )   ids: 0=up 1=down 2=left 3=right 4=A 5=B
+\   BTNP  ( id hold period -- pressed )
+\   KEY   ( code -- pressed )  KEYP ( code hold period -- pressed )
+\   MOUSE ( -- x y left mid right scrollx scrolly )
+\ Sound
+\   SFX   ( id note octave dur chan vol speed -- )
+\   MUSIC ( track frame row loop sustain tempo speed -- )
+\ Memory
+\   PEEK  ( addr bits -- val )   POKE  ( addr val bits -- )
+\   PEEK1 ( addr -- val )        POKE1 ( addr val -- )
+\   PEEK2 ( addr -- val )        POKE2 ( addr val -- )
+\   PEEK4 ( addr -- val )        POKE4 ( addr val -- )
+\   MEMCPY ( dst src size -- )   MEMSET ( dst val size -- )
+\   PMEM  ( index -- val )       PMEM! ( val index -- )
+\ Misc
+\   TIME    ( -- ms )    TSTAMP ( -- sec )
+\   VBANK   ( bank -- prev )
+\   SYNC    ( mask bank tocart -- )
+\   EXIT    ( -- )       RESET  ( -- )
+\ String helper (defined below)
+\   n>str  ( n -- c-addr u )
+\ ---------------------------------------------------------------------
 
 VARIABLE n     \ frame counter
 VARIABLE px    \ sprite x
@@ -14,7 +63,7 @@ VARIABLE py    \ sprite y
 : at  15 FALSE 1 FALSE PRINT DROP ;
 
 : BOOT
-  96 px !  64 py !
+  96 px !  24 py !
   S" Forth BOOT" 12 TRACE
 ;
 
@@ -47,8 +96,8 @@ VARIABLE py    \ sprite y
   1 BTN IF  py @ 1+ py ! THEN
   2 BTN IF  px @ 1- px ! THEN
   3 BTN IF  px @ 1+ px ! THEN
-  0 CLS
-  1 px @ py @ 14 2 0 0 2 2 SPR
+  13 CLS
+  1 px @ py @ 14 3 0 0 2 2 SPR
   S" Hello Forth!" 84 84 15 FALSE 1 FALSE PRINT DROP
 ;
 
@@ -62,8 +111,8 @@ VARIABLE py    \ sprite y
 \ -- Change the word called here to switch demo -----------------------
 : TIC
   \ demo01
-  \ demo02
-  demo03
+   demo02
+  \ demo03
   n @ 1+ n !
 ;
 
