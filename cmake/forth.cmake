@@ -47,10 +47,7 @@ if(BUILD_WITH_FORTH)
     # -------------------------------------------------------------------------
     set(PFORTH_DICDAT ${PFORTH_DIR}/pfdicdat.h)
 
-    # Use the 32-bit dictionary only for Emscripten/WASM; all other targets
-    # (including 32-bit ARM like 3DS or RPI) use the 64-bit dictionary as
-    # a fallback — those builds were already broken before this change.
-    if(EMSCRIPTEN)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
         set(_PFORTH_DICDAT_BUNDLED "${CMAKE_SOURCE_DIR}/cmake/pfdicdat_32.h")
     else()
         set(_PFORTH_DICDAT_BUNDLED "${CMAKE_SOURCE_DIR}/cmake/pfdicdat.h")
@@ -59,7 +56,7 @@ if(BUILD_WITH_FORTH)
     if(NOT EXISTS ${PFORTH_DICDAT})
         if(EXISTS ${_PFORTH_DICDAT_BUNDLED})
             message(STATUS "Forth: copying bundled ${_PFORTH_DICDAT_BUNDLED} to ${PFORTH_DICDAT}")
-            configure_file(${_PFORTH_DICDAT_BUNDLED} ${PFORTH_DICDAT} COPYONLY)
+            file(COPY ${_PFORTH_DICDAT_BUNDLED} DESTINATION ${PFORTH_DIR})
         else()
             message(STATUS "Forth: pfdicdat.h not found — bootstrapping pforth to generate it...")
             set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
