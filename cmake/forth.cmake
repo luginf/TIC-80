@@ -51,14 +51,25 @@ if(BUILD_WITH_FORTH)
         message(STATUS "Forth: bootstrapping pforth to generate pfdicdat.h...")
         set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
 
-        if(EMSCRIPTEN)
-            # WASM is 32-bit; build a 32-bit host pforth for the matching
-            # dictionary.  On Linux: sudo apt-get install gcc-multilib.
-            set(_PFORTH_EXTRA_ARGS
-                -DCMAKE_C_COMPILER=gcc
-                -DCMAKE_C_FLAGS=-m32
-                -DCMAKE_CXX_COMPILER_WORKS=TRUE)
+        if(CMAKE_CROSSCOMPILING)
+            # Cross-compilation: the environment may have CC set to the
+            # cross-compiler (emcc, arm-none-eabi-gcc, …).  Force the host
+            # native gcc so pforth runs on the build machine.
+            if(EMSCRIPTEN)
+                # WASM is 32-bit; build a 32-bit host pforth for the matching
+                # dictionary.  On Linux: sudo apt-get install gcc-multilib.
+                set(_PFORTH_EXTRA_ARGS
+                    -DCMAKE_C_COMPILER=gcc
+                    -DCMAKE_C_FLAGS=-m32
+                    -DCMAKE_CXX_COMPILER_WORKS=TRUE)
+            else()
+                # 3DS, Switch, RPI bare-metal, …: native 64-bit pforth.
+                set(_PFORTH_EXTRA_ARGS
+                    -DCMAKE_C_COMPILER=gcc
+                    -DCMAKE_CXX_COMPILER_WORKS=TRUE)
+            endif()
         else()
+            # Native build: let cmake pick the host compiler automatically.
             set(_PFORTH_EXTRA_ARGS -DCMAKE_CXX_COMPILER_WORKS=TRUE)
         endif()
 
