@@ -52,25 +52,30 @@ if(BUILD_WITH_FORTH)
         set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
 
         if(CMAKE_CROSSCOMPILING)
-            # Cross-compilation: the environment may have CC set to the
-            # cross-compiler (emcc, arm-none-eabi-gcc, …).  Force the host
-            # native gcc so pforth runs on the build machine.
-            if(EMSCRIPTEN)
-                # WASM is 32-bit; build a 32-bit host pforth for the matching
-                # dictionary.  On Linux: sudo apt-get install gcc-multilib.
+            # Cross-compilation: CC may be set to the cross-compiler
+            # (emcc, arm-none-eabi-gcc, …).  Always force the host native
+            # gcc so pforth runs on the build machine.
+            if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+                # 32-bit target (WASM, 3DS, RPI bare-metal, …): build a
+                # 32-bit host pforth to produce a matching dictionary.
+                # Requires gcc-multilib on Linux hosts.
                 set(_PFORTH_EXTRA_ARGS
                     -DCMAKE_C_COMPILER=gcc
                     -DCMAKE_C_FLAGS=-m32
+                    -DCMAKE_C_COMPILER_WORKS=TRUE
                     -DCMAKE_CXX_COMPILER_WORKS=TRUE)
             else()
-                # 3DS, Switch, RPI bare-metal, …: native 64-bit pforth.
+                # 64-bit cross target (Switch ARM64, …): native host pforth.
                 set(_PFORTH_EXTRA_ARGS
                     -DCMAKE_C_COMPILER=gcc
+                    -DCMAKE_C_COMPILER_WORKS=TRUE
                     -DCMAKE_CXX_COMPILER_WORKS=TRUE)
             endif()
         else()
             # Native build: let cmake pick the host compiler automatically.
-            set(_PFORTH_EXTRA_ARGS -DCMAKE_CXX_COMPILER_WORKS=TRUE)
+            set(_PFORTH_EXTRA_ARGS
+                -DCMAKE_C_COMPILER_WORKS=TRUE
+                -DCMAKE_CXX_COMPILER_WORKS=TRUE)
         endif()
 
         execute_process(
@@ -86,9 +91,9 @@ if(BUILD_WITH_FORTH)
         )
 
         if(NOT EXISTS ${PFORTH_DICDAT})
-            if(EMSCRIPTEN)
+            if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_CROSSCOMPILING)
                 message(FATAL_ERROR
-                    "Forth: could not generate 32-bit pfdicdat.h for WASM.\n"
+                    "Forth: could not generate 32-bit pfdicdat.h.\n"
                     "A 32-bit host gcc is required.  On Linux:\n"
                     "  sudo apt-get install gcc-multilib\n"
                     "Then delete the build directory and re-run cmake.")

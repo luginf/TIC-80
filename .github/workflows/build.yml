@@ -211,7 +211,7 @@ jobs:
       - name: Install Host toolchain
         run: |
           apt-get update
-          apt-get install --assume-yes build-essential ruby-full
+          apt-get install --assume-yes build-essential gcc-multilib ruby-full
 
       - name: Prebuild
         run: |
@@ -275,7 +275,7 @@ jobs:
       - name: Install Host toolchain
         run: |
           apt-get update
-          apt-get install --assume-yes build-essential ruby-full
+          apt-get install --assume-yes build-essential gcc-multilib ruby-full
 
       - name: Prebuild
         run: |
@@ -343,7 +343,7 @@ jobs:
       - name: Install Host toolchain
         run: |
           apt-get update
-          apt-get install --assume-yes build-essential ruby-full
+          apt-get install --assume-yes build-essential gcc-multilib ruby-full
 
       - name: Build
         run: |
@@ -372,7 +372,7 @@ jobs:
       - name: Install Host toolchain
         run: |
           apt-get update
-          apt-get install --assume-yes build-essential ruby-full
+          apt-get install --assume-yes build-essential gcc-multilib ruby-full
 
       - name: Build
         run: |
