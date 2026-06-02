@@ -22,11 +22,12 @@
 
 // Forth language integration for TIC-80 using pForth.
 //
-// This file serves two roles:
-//   1. Replacement for pForth's pfcustom.c: defines CustomFunctionTable[] and
+// This file serves three roles:
+//   1. pforth I/O layer: routes pforth output to TIC-80 trace, stubs file I/O.
+//   2. Replacement for pForth's pfcustom.c: defines CustomFunctionTable[] and
 //      CompileCustomFunctions() which register TIC-80 API words in the Forth
 //      dictionary.
-//   2. TIC-80 tic_script implementation: lifecycle (init/close/tick/boot/etc.)
+//   3. TIC-80 tic_script implementation: lifecycle (init/close/tick/boot/etc.)
 //      and the exported tic_script descriptor.
 //
 // Stack convention used by all wrappers:
@@ -52,11 +53,100 @@
 
 extern bool parse_note(const char* noteStr, s32* note, s32* octave);
 
-// I/O helpers declared in forth_io.c
-extern void        forthInitIO(tic_tick_data* tickData);
-extern void        forthTermIO(void);
-extern const char* forthGetOutputBuffer(void);
-extern void        forthClearOutputBuffer(void);
+// =============================================================================
+// pforth I/O layer
+//
+// Routes all pforth terminal output to the TIC-80 trace callback.
+// File I/O is stubbed out (not needed for cartridge execution).
+// =============================================================================
+
+#define FORTH_IO_BUF 256
+
+static char           gOutBuf[FORTH_IO_BUF];
+static int            gOutLen   = 0;
+static tic_tick_data* gTickData = NULL;
+
+static void flushOut(void)
+{
+    if (gOutLen > 0 && gTickData && gTickData->trace)
+    {
+        gOutBuf[gOutLen] = '\0';
+        gTickData->trace(gTickData->data, gOutBuf, 15);
+        gOutLen = 0;
+    }
+}
+
+static void forthInitIO(tic_tick_data* tickData)
+{
+    gTickData = tickData;
+    gOutLen   = 0;
+}
+
+static void forthTermIO(void)
+{
+    flushOut();
+    gTickData = NULL;
+}
+
+// Returns buffered output as a C string; used for error reporting.
+static const char* forthGetOutputBuffer(void)
+{
+    gOutBuf[gOutLen] = '\0';
+    return gOutBuf;
+}
+
+static void forthClearOutputBuffer(void)
+{
+    gOutLen = 0;
+}
+
+static void forthFlushOutput(void)
+{
+    flushOut();
+}
+
+// ---- pforth terminal I/O callbacks ------------------------------------------
+
+int sdTerminalOut(char c)
+{
+    if (gOutLen < FORTH_IO_BUF - 1)
+        gOutBuf[gOutLen++] = c;
+
+    if (c == '\n' || gOutLen >= FORTH_IO_BUF - 1)
+        flushOut();
+
+    return 0;
+}
+
+int sdTerminalEcho(char c)
+{
+    return sdTerminalOut(c);
+}
+
+int sdTerminalIn(void)
+{
+    return -1;
+}
+
+int sdTerminalFlush(void)
+{
+    flushOut();
+    return 0;
+}
+
+int sdQueryTerminal(void)
+{
+    return 0;
+}
+
+void sdTerminalInit(void) {}
+void sdTerminalTerm(void) {}
+
+cell_t sdSleepMillis(cell_t msec)
+{
+    (void)msec;
+    return 0;
+}
 
 // =============================================================================
 // Global state
@@ -976,10 +1066,6 @@ static bool initForth(tic_mem* tic, const char* code)
 
     return true;
 }
-
-// Flush any output left in the I/O buffer (e.g. from '.' without CR) at the
-// end of each TIC frame so it appears promptly in the console.
-extern void forthFlushOutput(void);
 
 static void callForthTick(tic_mem* tic)
 {

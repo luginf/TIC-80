@@ -32,56 +32,64 @@ if(BUILD_WITH_FORTH)
     )
 
     # -------------------------------------------------------------------------
-    # pfdicdat.h — pre-compiled standard dictionary for pforth.
-    # Cell size (32 vs 64 bit) must match the target platform:
-    #   cmake/pfdicdat.h     — 64-bit (x86-64, ARM64, …)
-    #   cmake/pfdicdat_32.h  — 32-bit (WASM/Emscripten, 32-bit ARM, …)
-    # To regenerate after updating pforth:
-    #   64-bit: cd vendor/pforth && cmake . && make pforth_dic_header
-    #           cp vendor/pforth/csrc/pfdicdat.h cmake/pfdicdat.h
-    #   32-bit: cmake -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_C_FLAGS=-m32 \
-    #                 -DCMAKE_CXX_COMPILER_WORKS=TRUE \
-    #                 -S vendor/pforth -B /tmp/pf32 && \
-    #           cmake --build /tmp/pf32 --target pforth_dic_header && \
-    #           cp vendor/pforth/csrc/pfdicdat.h cmake/pfdicdat_32.h
+    # pfdicdat.h — pforth standard dictionary, bootstrapped at configure time.
+    #
+    # vendor/pforth/csrc/pfdicdat.h is gitignored; it is generated here by
+    # building pforth natively on the host.  This guarantees the dictionary
+    # stays in sync with the pinned pforth submodule automatically — no
+    # manual copy step needed.
+    #
+    # For WASM/Emscripten the dictionary must reflect a 32-bit cell size, so
+    # pforth is built with -m32 (requires gcc-multilib on Linux hosts).
+    #
+    # To force regeneration after a pforth submodule update:
+    #   rm vendor/pforth/csrc/pfdicdat.h  &&  cmake <build-dir>
     # -------------------------------------------------------------------------
     set(PFORTH_DICDAT ${PFORTH_DIR}/pfdicdat.h)
 
-    # Use the 32-bit dictionary only for Emscripten/WASM; all other targets
-    # (including 32-bit ARM like 3DS or RPI) use the 64-bit dictionary as
-    # a fallback — those builds were already broken before this change.
-    if(EMSCRIPTEN)
-        set(_PFORTH_DICDAT_BUNDLED "${CMAKE_SOURCE_DIR}/cmake/pfdicdat_32.h")
-    else()
-        set(_PFORTH_DICDAT_BUNDLED "${CMAKE_SOURCE_DIR}/cmake/pfdicdat.h")
-    endif()
-
     if(NOT EXISTS ${PFORTH_DICDAT})
-        if(EXISTS ${_PFORTH_DICDAT_BUNDLED})
-            message(STATUS "Forth: copying bundled ${_PFORTH_DICDAT_BUNDLED} to ${PFORTH_DICDAT}")
-            configure_file(${_PFORTH_DICDAT_BUNDLED} ${PFORTH_DICDAT} COPYONLY)
+        message(STATUS "Forth: bootstrapping pforth to generate pfdicdat.h...")
+        set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
+
+        if(EMSCRIPTEN)
+            # WASM is 32-bit; build a 32-bit host pforth for the matching
+            # dictionary.  On Linux: sudo apt-get install gcc-multilib.
+            set(_PFORTH_EXTRA_ARGS
+                -DCMAKE_C_COMPILER=gcc
+                -DCMAKE_C_FLAGS=-m32
+                -DCMAKE_CXX_COMPILER_WORKS=TRUE)
         else()
-            message(STATUS "Forth: pfdicdat.h not found — bootstrapping pforth to generate it...")
-            set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
-            execute_process(
-                COMMAND ${CMAKE_COMMAND} -G "Unix Makefiles"
-                        -DCMAKE_CXX_COMPILER_WORKS=TRUE
-                        -S "${THIRDPARTY_DIR}/pforth" -B "${_PFORTH_BOOTSTRAP_DIR}"
-                RESULT_VARIABLE _pforth_cfg_result
-            )
-            execute_process(
-                COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
-                        --target pforth_dic_header
-                RESULT_VARIABLE _pforth_build_result
-            )
-            if(NOT EXISTS ${PFORTH_DICDAT})
-                message(FATAL_ERROR
-                    "Forth: failed to generate pfdicdat.h at ${PFORTH_DICDAT}.\n"
-                    "Try manually: cd ${THIRDPARTY_DIR}/pforth && cmake . && make pforth_dic_header\n"
-                    "Then: cp ${THIRDPARTY_DIR}/pforth/csrc/pfdicdat.h ${_PFORTH_DICDAT_BUNDLED}")
-            endif()
-            message(STATUS "Forth: pfdicdat.h generated successfully")
+            set(_PFORTH_EXTRA_ARGS -DCMAKE_CXX_COMPILER_WORKS=TRUE)
         endif()
+
+        execute_process(
+            COMMAND ${CMAKE_COMMAND}
+                    ${_PFORTH_EXTRA_ARGS}
+                    -S "${THIRDPARTY_DIR}/pforth" -B "${_PFORTH_BOOTSTRAP_DIR}"
+            RESULT_VARIABLE _pforth_cfg_result
+        )
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
+                    --target pforth_dic_header
+            RESULT_VARIABLE _pforth_build_result
+        )
+
+        if(NOT EXISTS ${PFORTH_DICDAT})
+            if(EMSCRIPTEN)
+                message(FATAL_ERROR
+                    "Forth: could not generate 32-bit pfdicdat.h for WASM.\n"
+                    "A 32-bit host gcc is required.  On Linux:\n"
+                    "  sudo apt-get install gcc-multilib\n"
+                    "Then delete the build directory and re-run cmake.")
+            else()
+                message(FATAL_ERROR
+                    "Forth: failed to generate pfdicdat.h.\n"
+                    "Try manually:\n"
+                    "  cd vendor/pforth && cmake . && make pforth_dic_header")
+            endif()
+        endif()
+
+        message(STATUS "Forth: pfdicdat.h generated successfully")
     endif()
 
     # -------------------------------------------------------------------------
@@ -98,7 +106,6 @@ if(BUILD_WITH_FORTH)
     set(FORTH_SRC
         ${PFORTH_KERNEL_SOURCES}
         ${CMAKE_SOURCE_DIR}/src/api/forth.c
-        ${CMAKE_SOURCE_DIR}/src/api/forth_io.c
         ${CMAKE_SOURCE_DIR}/src/api/parse_note.c
     )
 
