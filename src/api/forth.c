@@ -791,6 +791,7 @@ static cell_t tic_forth_ffts(void)
     return (cell_t)(s32)(v * 65535.0);
 }
 
+
 // =============================================================================
 // pForth custom function table
 //
@@ -955,9 +956,15 @@ static void checkStackBalance(tic_core* core, cell_t before, const char* name)
     if (after != before && core->data)
     {
         char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "Forth: stack imbalance in %s (depth %ld -> %ld)",
-                 name, (long)before, (long)after);
+        cell_t delta = after - before;
+        if (delta > 0)
+            snprintf(buf, sizeof(buf),
+                     "Forth: stack overflow in %s (%ld extra item%s left)",
+                     name, (long)delta, delta == 1 ? "" : "s");
+        else
+            snprintf(buf, sizeof(buf),
+                     "Forth: stack underflow in %s (%ld item%s missing)",
+                     name, (long)-delta, -delta == 1 ? "" : "s");
         core->data->error(core->data->data, buf);
         // Discard leftover stack items to avoid cascading errors.
         while (pfGetStackDepth() > before)

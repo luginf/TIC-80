@@ -47,6 +47,10 @@ if(BUILD_WITH_FORTH)
     # -------------------------------------------------------------------------
     set(PFORTH_DICDAT ${PFORTH_DIR}/pfdicdat.h)
 
+    # Always regenerate: a stale 32-bit pfdicdat.h in a 64-bit build (or vice
+    # versa) causes a silent segfault at Forth VM startup.  Regeneration runs
+    # at cmake configure time (not every build) so the cost is acceptable.
+    file(REMOVE ${PFORTH_DICDAT})
     if(NOT EXISTS ${PFORTH_DICDAT})
         message(STATUS "Forth: bootstrapping pforth to generate pfdicdat.h...")
         set(_PFORTH_BOOTSTRAP_DIR "${CMAKE_BINARY_DIR}/pforth_bootstrap")
