@@ -57,11 +57,8 @@ Language IDs currently in use: 10–20. New languages should use 21+.
 
 **Files created**:
 - `vendor/pforth/` — git submodule (pforth, BSD-0 license)
-- `cmake/forth.cmake` — build integration
-- `cmake/pfdicdat.h` — committed 64-bit pforth dictionary (see below)
-- `cmake/pfdicdat_32.h` — committed 32-bit pforth dictionary (for WASM/Emscripten)
-- `src/api/forth.c` — VM lifecycle + TIC-80 API binding (replaces pfcustom.c)
-- `src/api/forth_io.c` — pforth I/O redirected to TIC-80 trace callback
+- `cmake/forth.cmake` — build integration (bootstraps pfdicdat.h at configure time)
+- `src/api/forth.c` — VM lifecycle + TIC-80 API binding (replaces pfcustom.c; merged from forth_io.c)
 - `build/assets/forthdemo.tic.dat` — demo cartridge included as a C array in `forth.c`
 
 **Build status**: compiles and passes CI for Linux, macOS, Windows, RPI, 3DS, Switch, Android, HTML/WASM.
@@ -96,32 +93,25 @@ A `.fth` file loaded with `load pong.fth` in the TIC-80 console **must contain t
 
 Key codes (enum values): a=1…z=26, 0=27…9=36, space=48, return=50, up=58, down=59, escape=66
 
-### Committed generated files
+### pfdicdat.h — auto-bootstrapped dictionary
 
-Three files are generated from sources but committed to the repo so CI never needs to regenerate them:
+**pfdicdat.h is NOT committed** — `cmake/forth.cmake` always regenerates it at cmake configure time by building pforth natively on the host. This guarantees the dictionary stays in sync with the pinned pforth submodule and avoids 32-bit/64-bit mismatches.
 
-| File | Source | Cell size | Regenerate when |
-|------|--------|-----------|-----------------|
-| `cmake/pfdicdat.h` | pforth 64-bit | 8 bytes | `vendor/pforth` updated |
-| `cmake/pfdicdat_32.h` | pforth 32-bit | 4 bytes | `vendor/pforth` updated |
-| `build/assets/forthdemo.tic.dat` | `demos/forthdemo.fth` | — | that file changes |
+**Critical**: a stale or wrong-bitness pfdicdat.h causes a **silent segfault** at Forth VM startup — no error message, TIC-80 just crashes when you select "new forth". Only Lua/other languages are unaffected. Root cause: pforth loads the binary dictionary directly into memory; a 32-bit dict in a 64-bit binary makes pforth interpret 4-byte pointers as 8-byte pointers.
 
-**Why two pfdicdat files**: pforth's pre-compiled dictionary (`pfdicdat.h`) is cell-size-dependent — 64-bit on x86-64, 32-bit on WASM (Emscripten). `cmake/forth.cmake` selects `pfdicdat_32.h` when `EMSCRIPTEN` is set, `pfdicdat.h` otherwise.
+`cmake/forth.cmake` uses `file(REMOVE ${PFORTH_DICDAT})` before the bootstrap check so that every `cmake <build-dir>` regenerates a fresh, correctly-sized dictionary.
 
-**Regenerating `cmake/pfdicdat.h`** (64-bit, after updating pforth):
-```bash
-cd vendor/pforth && cmake -DCMAKE_CXX_COMPILER_WORKS=TRUE . && make pforth_dic_header
-cp vendor/pforth/csrc/pfdicdat.h cmake/pfdicdat.h
-```
+**Platform matrix**:
+| Target | Cell size | Host compiler | Extra flag |
+|--------|-----------|---------------|------------|
+| Linux/macOS/Windows/ARM64/Switch | 64-bit | host `gcc` | — |
+| WASM (Emscripten), 3DS, RPI baremetal | 32-bit | `gcc -m32` | needs `gcc-multilib` |
 
-**Regenerating `cmake/pfdicdat_32.h`** (32-bit, requires gcc-13 multilib):
-```bash
-cmake -G "Unix Makefiles" -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_C_FLAGS=-m32 \
-      -DCMAKE_CXX_COMPILER_WORKS=TRUE \
-      -S vendor/pforth -B /tmp/pf32
-cmake --build /tmp/pf32 --target pforth_dic_header
-cp vendor/pforth/csrc/pfdicdat.h cmake/pfdicdat_32.h
-```
+**Committed generated files** (forthdemo only):
+
+| File | Source | Regenerate when |
+|------|--------|-----------------|
+| `build/assets/forthdemo.tic.dat` | `demos/forthdemo.fth` | that file changes |
 
 **Regenerating `build/assets/forthdemo.tic.dat`** (requires `BUILD_TOOLS=ON`):
 ```bash
