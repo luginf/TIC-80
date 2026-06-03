@@ -13,7 +13,7 @@ VARIABLE py    \ sprite y
   96 px !  24 py !
 ;
 
-: demo01
+: TIC
   0 BTN IF  py @ 1- py ! THEN
   1 BTN IF  py @ 1+ py ! THEN
   2 BTN IF  px @ 1- px ! THEN
@@ -21,10 +21,6 @@ VARIABLE py    \ sprite y
   13 CLS
   1 px @ py @ 14 3 0 0 2 2 SPR
   S" Hello Forth!" 84 84 15 FALSE 1 FALSE PRINT DROP
-;
-
-: TIC
-demo01
 ;
 
 

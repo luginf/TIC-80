@@ -477,6 +477,9 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Install 32-bit build tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+
       - name: Build
         run: |
           cd build/android
