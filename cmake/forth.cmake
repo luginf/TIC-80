@@ -88,11 +88,54 @@ if(BUILD_WITH_FORTH)
                     -S "${THIRDPARTY_DIR}/pforth" -B "${_PFORTH_BOOTSTRAP_DIR}"
             RESULT_VARIABLE _pforth_cfg_result
         )
+        # Build only the pforth executable (not the custom dic targets).
+        # Running pforth via cmake --build would use MSBuild on Windows, which
+        # creates a pipe to capture custom-command output.  That pipe deadlocks
+        # when pforth's trace-include output exceeds the Windows pipe buffer.
+        # Running pforth directly from execute_process avoids the MSBuild pipe.
         execute_process(
             COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
-                    --target pforth_dic_header
+                    --target pforth
             RESULT_VARIABLE _pforth_build_result
-            TIMEOUT 300
+            TIMEOUT 120
+        )
+
+        # Visual Studio multi-config generators append a per-config subdir
+        # (e.g. Debug/) even when CMAKE_RUNTIME_OUTPUT_DIRECTORY is set;
+        # single-config generators (Makefiles, Ninja) do not.
+        if(CMAKE_HOST_WIN32)
+            if(EXISTS "${PFORTH_FTH_DIR}/Debug/pforth.exe")
+                set(_pforth_exe "${PFORTH_FTH_DIR}/Debug/pforth.exe")
+            else()
+                set(_pforth_exe "${PFORTH_FTH_DIR}/pforth.exe")
+            endif()
+            set(_pforth_null "NUL")
+        else()
+            set(_pforth_exe "${PFORTH_FTH_DIR}/pforth")
+            set(_pforth_null "/dev/null")
+        endif()
+
+        # Build pforth.dic (initialise the full standard dictionary).
+        execute_process(
+            COMMAND "${_pforth_exe}" -i "${PFORTH_FTH_DIR}/system.fth"
+            WORKING_DIRECTORY "${PFORTH_FTH_DIR}"
+            INPUT_FILE "${_pforth_null}"
+            RESULT_VARIABLE _pforth_dic_result
+            TIMEOUT 120
+        )
+
+        # Export the dictionary as a C header.
+        execute_process(
+            COMMAND "${_pforth_exe}" "${PFORTH_FTH_DIR}/mkdicdat.fth"
+            WORKING_DIRECTORY "${PFORTH_FTH_DIR}"
+            INPUT_FILE "${_pforth_null}"
+            RESULT_VARIABLE _pforth_dicdat_result
+            TIMEOUT 30
+        )
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E rename
+                    "${PFORTH_FTH_DIR}/pfdicdat.h"
+                    "${PFORTH_DIR}/pfdicdat.h"
         )
 
         if(NOT EXISTS ${PFORTH_DICDAT})
