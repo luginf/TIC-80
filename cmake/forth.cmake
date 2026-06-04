@@ -140,15 +140,18 @@ endif()
         execute_process(
             COMMAND ${CMAKE_COMMAND}
                     -DPFORTH_VENDOR_DIR=${THIRDPARTY_DIR}/pforth
+                    -DCMAKE_BUILD_TYPE=Release
                     ${_PFORTH_EXTRA_ARGS}
                     -S "${_PFORTH_BOOTSTRAP_SRC}" -B "${_PFORTH_BOOTSTRAP_DIR}"
             RESULT_VARIABLE _pforth_cfg_result
         )
+        # Build in Release to avoid MSVC Debug overhead (runtime checks on every
+        # function call make pforth ~10-20x slower, causing the 120s timeout).
         execute_process(
             COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
-                    --target pforth
+                    --target pforth --config Release
             RESULT_VARIABLE _pforth_build_result
-            TIMEOUT 120
+            TIMEOUT 180
         )
 
         # pforth.exe is directly in PFORTH_FTH_DIR on all platforms/generators
@@ -171,7 +174,7 @@ endif()
             RESULT_VARIABLE _pforth_dic_result
             OUTPUT_QUIET
             ERROR_QUIET
-            TIMEOUT 120
+            TIMEOUT 300
         )
 
         # Export the dictionary as a C header.
@@ -182,7 +185,7 @@ endif()
             RESULT_VARIABLE _pforth_dicdat_result
             OUTPUT_QUIET
             ERROR_QUIET
-            TIMEOUT 30
+            TIMEOUT 120
         )
         execute_process(
             COMMAND ${CMAKE_COMMAND} -E rename
