@@ -116,11 +116,17 @@ if(BUILD_WITH_FORTH)
         endif()
 
         # Build pforth.dic (initialise the full standard dictionary).
+        # OUTPUT_QUIET + ERROR_QUIET make cmake drain pforth's stdout/stderr via
+        # a background thread.  Without this, trace-include output fills the
+        # inherited stdout pipe (GitHub Actions back-pressure), pforth blocks on
+        # WriteFile, and cmake's execute_process waits forever → pipe deadlock.
         execute_process(
             COMMAND "${_pforth_exe}" -i "${PFORTH_FTH_DIR}/system.fth"
             WORKING_DIRECTORY "${PFORTH_FTH_DIR}"
             INPUT_FILE "${_pforth_null}"
             RESULT_VARIABLE _pforth_dic_result
+            OUTPUT_QUIET
+            ERROR_QUIET
             TIMEOUT 120
         )
 
@@ -130,6 +136,8 @@ if(BUILD_WITH_FORTH)
             WORKING_DIRECTORY "${PFORTH_FTH_DIR}"
             INPUT_FILE "${_pforth_null}"
             RESULT_VARIABLE _pforth_dicdat_result
+            OUTPUT_QUIET
+            ERROR_QUIET
             TIMEOUT 30
         )
         execute_process(
