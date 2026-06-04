@@ -92,6 +92,7 @@ if(BUILD_WITH_FORTH)
             COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
                     --target pforth_dic_header
             RESULT_VARIABLE _pforth_build_result
+            TIMEOUT 300
         )
 
         if(NOT EXISTS ${PFORTH_DICDAT})
