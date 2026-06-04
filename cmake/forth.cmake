@@ -82,17 +82,68 @@ if(BUILD_WITH_FORTH)
                 -DCMAKE_CXX_COMPILER_WORKS=TRUE)
         endif()
 
+        # Write a custom CMakeLists.txt for the bootstrap that uses the portable
+        # stdio I/O module (getchar/putchar) instead of win32_console (_getch).
+        # win32_console reads from the Windows console input buffer (CONIN$) via
+        # _getch(), which blocks indefinitely on CI runners that have a console
+        # but no keyboard input.  The stdio module reads from stdin (fd 0) which
+        # respects the INPUT_FILE redirect to the null device.
+        set(_PFORTH_BOOTSTRAP_SRC "${CMAKE_BINARY_DIR}/pforth_bootstrap_src")
+        file(MAKE_DIRECTORY "${_PFORTH_BOOTSTRAP_SRC}")
+        file(WRITE "${_PFORTH_BOOTSTRAP_SRC}/CMakeLists.txt" [=[
+cmake_minimum_required(VERSION 3.6)
+project(PForth)
+message(STATUS "Configuring pforth bootstrap (stdio I/O)...")
+
+if(NOT DEFINED PFORTH_VENDOR_DIR)
+    message(FATAL_ERROR "PFORTH_VENDOR_DIR must be defined")
+endif()
+
+set(PFORTH_CSRC "${PFORTH_VENDOR_DIR}/csrc")
+set(PFORTH_FTH  "${PFORTH_VENDOR_DIR}/fth")
+
+file(STRINGS "${PFORTH_CSRC}/sources.cmake" _raw)
+set(_c_srcs)
+foreach(_f ${_raw})
+    if(_f MATCHES "\\.c$")
+        list(APPEND _c_srcs "${PFORTH_CSRC}/${_f}")
+    endif()
+endforeach()
+list(APPEND _c_srcs
+    "${PFORTH_CSRC}/stdio/pf_fileio_stdio.c"
+    "${PFORTH_CSRC}/stdio/pf_io_stdio.c")
+
+if(MSVC)
+    add_compile_options(/W3 /wd4701 /wd4244 /wd4267 /wd4127 /wd4100 /wd4456)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-w)
+endif()
+
+add_library(PForth_lib STATIC ${_c_srcs})
+target_compile_definitions(PForth_lib PRIVATE PF_SUPPORT_FP)
+target_include_directories(PForth_lib PRIVATE "${PFORTH_CSRC}")
+
+# Put pforth.exe directly in fth/ (no Debug/ subdir) on all generators.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         "${PFORTH_FTH}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   "${PFORTH_FTH}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${PFORTH_FTH}")
+
+add_executable(pforth "${PFORTH_CSRC}/pf_main.c")
+target_link_libraries(pforth PForth_lib)
+target_include_directories(pforth PRIVATE "${PFORTH_CSRC}")
+if(UNIX OR APPLE)
+    target_link_libraries(pforth m)
+endif()
+]=])
+
         execute_process(
             COMMAND ${CMAKE_COMMAND}
+                    -DPFORTH_VENDOR_DIR=${THIRDPARTY_DIR}/pforth
                     ${_PFORTH_EXTRA_ARGS}
-                    -S "${THIRDPARTY_DIR}/pforth" -B "${_PFORTH_BOOTSTRAP_DIR}"
+                    -S "${_PFORTH_BOOTSTRAP_SRC}" -B "${_PFORTH_BOOTSTRAP_DIR}"
             RESULT_VARIABLE _pforth_cfg_result
         )
-        # Build only the pforth executable (not the custom dic targets).
-        # Running pforth via cmake --build would use MSBuild on Windows, which
-        # creates a pipe to capture custom-command output.  That pipe deadlocks
-        # when pforth's trace-include output exceeds the Windows pipe buffer.
-        # Running pforth directly from execute_process avoids the MSBuild pipe.
         execute_process(
             COMMAND ${CMAKE_COMMAND} --build "${_PFORTH_BOOTSTRAP_DIR}"
                     --target pforth
@@ -100,15 +151,10 @@ if(BUILD_WITH_FORTH)
             TIMEOUT 120
         )
 
-        # Visual Studio multi-config generators append a per-config subdir
-        # (e.g. Debug/) even when CMAKE_RUNTIME_OUTPUT_DIRECTORY is set;
-        # single-config generators (Makefiles, Ninja) do not.
+        # pforth.exe is directly in PFORTH_FTH_DIR on all platforms/generators
+        # because we force CMAKE_RUNTIME_OUTPUT_DIRECTORY* in the bootstrap.
         if(CMAKE_HOST_WIN32)
-            if(EXISTS "${PFORTH_FTH_DIR}/Debug/pforth.exe")
-                set(_pforth_exe "${PFORTH_FTH_DIR}/Debug/pforth.exe")
-            else()
-                set(_pforth_exe "${PFORTH_FTH_DIR}/pforth.exe")
-            endif()
+            set(_pforth_exe "${PFORTH_FTH_DIR}/pforth.exe")
             set(_pforth_null "NUL")
         else()
             set(_pforth_exe "${PFORTH_FTH_DIR}/pforth")
@@ -116,10 +162,8 @@ if(BUILD_WITH_FORTH)
         endif()
 
         # Build pforth.dic (initialise the full standard dictionary).
-        # OUTPUT_QUIET + ERROR_QUIET make cmake drain pforth's stdout/stderr via
-        # a background thread.  Without this, trace-include output fills the
-        # inherited stdout pipe (GitHub Actions back-pressure), pforth blocks on
-        # WriteFile, and cmake's execute_process waits forever → pipe deadlock.
+        # INPUT_FILE redirects stdin to the null device so pforth's getchar()
+        # returns EOF immediately instead of waiting for interactive input.
         execute_process(
             COMMAND "${_pforth_exe}" -i "${PFORTH_FTH_DIR}/system.fth"
             WORKING_DIRECTORY "${PFORTH_FTH_DIR}"
