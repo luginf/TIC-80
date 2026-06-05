@@ -1259,5 +1259,5 @@ TIC_EXPORT const tic_script EXPORT_SCRIPT(Forth) =
     .api_keywordsCount = COUNT_OF(ForthAPIKeywords),
 
     .demo = { DemoRom, sizeof DemoRom, "forthdemo.tic" },
-    .mark = { MarkRom, 0, "forthmark.tic" },
+    .mark = { MarkRom, sizeof MarkRom, "forthmark.tic" },
 };
