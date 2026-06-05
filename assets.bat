@@ -63,6 +63,7 @@ build\bin\bin2txt build\squirreldemo.tic build\assets\squirreldemo.tic.dat -z
 build\bin\bin2txt build\tetris.tic build\assets\tetris.tic.dat -z
 build\bin\bin2txt build\forthdemo.tic build\assets\forthdemo.tic.dat -z
 build\bin\bin2txt build\wrendemo.tic build\assets\wrendemo.tic.dat -z
+build\bin\bin2txt build\forthmark.tic build\assets\forthmark.tic.dat -z
 build\bin\bin2txt build\janetmark.tic build\assets\janetmark.tic.dat -z
 build\bin\bin2txt build\jsmark.tic build\assets\jsmark.tic.dat -z
 build\bin\bin2txt build\luamark.tic build\assets\luamark.tic.dat -z
