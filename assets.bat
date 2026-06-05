@@ -27,6 +27,7 @@ build\bin\prj2cart demos\yuedemo.yue build\yuedemo.tic
 build\bin\wasmp2cart demos\wasm\wasmdemo.wasmp build\wasmdemo.tic --binary demos\wasm\wasmdemo.wasm
 build\bin\wasmp2cart demos\bunny\wasmmark\wasmmark.wasmp build\wasmmark.tic --binary demos\bunny\wasmmark\wasmmark.wasm
 
+build\bin\prj2cart demos\bunny\forthmark.fth build\forthmark.tic
 build\bin\prj2cart demos\bunny\janetmark.janet build\janetmark.tic
 build\bin\prj2cart demos\bunny\jsmark.js build\jsmark.tic
 build\bin\prj2cart demos\bunny\luamark.lua build\luamark.tic
