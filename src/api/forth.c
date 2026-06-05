@@ -1212,7 +1212,10 @@ static const u8 DemoRom[] =
     #include "../build/assets/forthdemo.tic.dat"
 };
 
-static const u8 MarkRom[] = { 0 };
+static const u8 MarkRom[] =
+{
+    #include "../build/assets/forthmark.tic.dat"
+};
 
 // =============================================================================
 // tic_script descriptor
