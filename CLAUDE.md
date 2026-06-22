@@ -88,7 +88,8 @@ A `.fth` file loaded with `load pong.fth` in the TIC-80 console **must contain t
 - `( id -- pressed ) BTN` — button state (0-7 player1, 8-15 player2)
 - `( id hold repeat -- pressed ) BTNP` — button press with repeat
 - `( c-addr u color -- ) TRACE` — console output
-- `( keycode -- pressed ) KEY` / `( keycode hold period -- pressed ) KEYP` — keyboard
+- `( keycode -- pressed ) KEYPRESSED` / `( keycode hold period -- pressed ) KEYP` — keyboard (the API word is `KEYPRESSED`, not `KEY`, which stays standard Forth)
+- `( -- ) EXITGAME` — quit the cart to the console (the API word is `EXITGAME`, not `EXIT`, which stays Forth's early return)
 - Number to string: `S>D <# #S #>` → `( n -- c-addr u )` (use `dungeon23.fth` as reference)
 
 Key codes (enum values): a=1…z=26, 0=27…9=36, space=48, return=50, up=58, down=59, escape=66
@@ -98,21 +99,24 @@ Key codes (enum values): a=1…z=26, 0=27…9=36, space=48, return=50, up=58, do
 These bite at **run time**, not at `load`, and usually produce *silent* failure
 (cart returns to the console, or a hard segfault) with no Forth error message.
 
-- **`EXIT` is NOT Forth's "return from word".** TIC-80 registers `EXIT` as an API
-  word (`TIC_API_LIST` / `CreateGlueToC("EXIT",...)` in `src/api/forth.c`) that
-  **quits the cart back to the console**. Writing `… IF foo EXIT THEN …` for an
-  early return makes the cart silently drop to the console the first frame `TIC`
-  runs — it looks like "`run` does nothing". **Never use `EXIT` for control
-  flow**; rewrite with nested `IF/ELSE/THEN`. No working cart (demo90s,
-  dungeon23, forthtoise, pong) uses `EXIT`. (rabbit.fth had 14 and never ran.)
+- **`EXIT` and `KEY` are standard Forth words — keep them that way.** They
+  collide with two TIC-80 API names. The bindings in `src/api/forth.c` are
+  therefore registered under renamed words: the quit-to-console API is
+  **`EXITGAME`** (not `EXIT`) and the "is this key held?" query is
+  **`KEYPRESSED`** (not `KEY`). This frees `EXIT` for its core meaning —
+  *return from the current word* — so `… IF foo EXIT THEN …` works as an early
+  return, and `KEY` keeps its standard Forth meaning. (History: when the
+  quit-API was bound as `EXIT`, every early-return `EXIT` silently dropped the
+  cart back to the console the first frame `TIC` ran — rabbit.fth had 14 and
+  never started.)
 
 - **Forth is case-insensitive → name collisions.** `PX` and `px` are the *same*
   word, so `VARIABLE px` followed by `: PX px @ … ;` **redefines `px`** to the
   colon word; every later `px @`/`px !` then invokes it → recursion/garbage →
   **hard segfault**. Give variables and words distinct names (`px` + `XPIX`, not
-  `px` + `PX`). Likewise don't accidentally shadow standard words: `MOVE` is
-  standard (memory move) — use a different name like `SPEED`. (`FP` does *not*
-  exist, so it is safe to define.)
+  `px` + `PX`). Likewise don't accidentally shadow standard words: `MOVE` (memory
+  move), `QUIT`, `ABORT`, `BYE`, `EXIT`, `KEY` — pick other names for your own
+  words. (`FP` does *not* exist, so it is safe to define.)
 
 - **Code is fed one line at a time, truncated to 255 chars** (`TIB_SIZE-1`, see
   `forthInterpretLines`), and **compiled at `run`, not `load`** (`load` only
