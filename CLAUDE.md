@@ -93,6 +93,108 @@ A `.fth` file loaded with `load pong.fth` in the TIC-80 console **must contain t
 
 Key codes (enum values): a=1…z=26, 0=27…9=36, space=48, return=50, up=58, down=59, escape=66
 
+### Forth pitfalls (each cost a real debug session)
+
+These bite at **run time**, not at `load`, and usually produce *silent* failure
+(cart returns to the console, or a hard segfault) with no Forth error message.
+
+- **`EXIT` is NOT Forth's "return from word".** TIC-80 registers `EXIT` as an API
+  word (`TIC_API_LIST` / `CreateGlueToC("EXIT",...)` in `src/api/forth.c`) that
+  **quits the cart back to the console**. Writing `… IF foo EXIT THEN …` for an
+  early return makes the cart silently drop to the console the first frame `TIC`
+  runs — it looks like "`run` does nothing". **Never use `EXIT` for control
+  flow**; rewrite with nested `IF/ELSE/THEN`. No working cart (demo90s,
+  dungeon23, forthtoise, pong) uses `EXIT`. (rabbit.fth had 14 and never ran.)
+
+- **Forth is case-insensitive → name collisions.** `PX` and `px` are the *same*
+  word, so `VARIABLE px` followed by `: PX px @ … ;` **redefines `px`** to the
+  colon word; every later `px @`/`px !` then invokes it → recursion/garbage →
+  **hard segfault**. Give variables and words distinct names (`px` + `XPIX`, not
+  `px` + `PX`). Likewise don't accidentally shadow standard words: `MOVE` is
+  standard (memory move) — use a different name like `SPEED`. (`FP` does *not*
+  exist, so it is safe to define.)
+
+- **Code is fed one line at a time, truncated to 255 chars** (`TIB_SIZE-1`, see
+  `forthInterpretLines`), and **compiled at `run`, not `load`** (`load` only
+  reads the file). The feeder **aborts on the first non-zero throw**, so one
+  undefined word anywhere fails the whole cart. Map/tile data rows (480 chars)
+  are `\` comments, so truncation is harmless. Language is detected from the
+  `\ script: forth` header tag — omit it and the cart runs as Lua
+  (`unexpected symbol near '\'`).
+
+### perso/demo90s.fth — 90s demoscene-style example
+
+Reference cart showing several Forth/TIC-80 techniques together:
+
+- **Parallax starfield**: 3 layers of pixels (`PIX!`) in `CREATE ... ALLOT` arrays,
+  each layer scrolling at a different speed/color, wrapping at the screen edge.
+- **Raster/copper bars**: horizontal `RECT` bands whose Y position is offset by
+  `FSIN`, classic wavy-bar effect. Drawn AFTER the starfield in `TIC` so the
+  bars cover the stars (bars in front), not the other way around.
+- **Spinning cubes**: filled squares (`TRI` ×2) that orbit the screen center and
+  spin on themselves, computed with `FSIN`/`FCOS` 2D rotation. Pattern: store
+  `cos`/`sin` of the current angle in `fvariable`s once, then reuse them for all
+  4 corners via a `rotate-pt` word (avoids `FROT`/`FOVER`, see pforth float notes
+  below). Hidden while the rotating 3D ball spiral is shown (button A, see below)
+  — the two patterns are mutually exclusive, gated by `show-loop @ if ... else
+  ... then` in `TIC`.
+- **Hopping mascot sprite**: the default 2×2 `SPR` block (tiles `#1 #2 #17 #18`,
+  `colorkey`=14, scale 1, no flip/rotate — same parameters as `demos/forthdemo.fth`'s
+  "Hello Forth!" icon). `colorkey`=12 (white) must NOT be used here: `c`=12 is the
+  dominant fill color *inside* the tiles (the white outline that gives the icon its
+  silhouette), so making it transparent shreds the icon into disconnected
+  fragments. No deformation: it just hops up and down in place on the left
+  (`mascot-dy`, `FABS FSIN` of `frame*4`, amplitude `mascot-hop`=6px), in the
+  same `frame*4` phase as the scroller letters (`wavey`) so it bounces in
+  rhythm with the text below it. Always drawn, independent of arrow-key
+  spin/parallax and of button A/B.
+- **Rotating 3D ball spiral (button A)**: toggled by fire button A
+  (`4 -1 -1 btnp` → `toggle-loop` → `show-loop`). When shown, it REPLACES the
+  three spinning squares (mutually exclusive in `TIC`, see above) — it is a
+  more elaborate pattern than a flat ring of dots, as requested ("spirale,
+  serpentin avec effet 3D"). 12 balls (`loop-pts`) are placed on an
+  Archimedean spiral: orbit radius grows linearly with index
+  (`spiral-radius = i*spiral-dr + spiral-r0`), and the per-ball angle
+  (`spiral-angle = i*spiral-twist + frame*3`) both spaces the balls around
+  the spiral and rotates the whole pattern over time. Depth is faked with
+  `z = FSIN(angle)` (range -1..1, stored in `_ball-z`): `ball-radius` maps
+  `z` to a CIRC radius of ~1..4 px, and `ball-color` picks color 11 (bright
+  cyan, "near") / 9 (mid) / 8 (dark blue, "far") from `z`, scaled to an
+  integer via `f@ 100e f* f>s` and compared with plain `>`/`<` — **`F>`/`F<`
+  are NOT available in this pforth build**, unlike `F+ F- F* F/ FNEGATE
+  S>F F>S FABS FSIN FCOS FDUP F@ F!` which all work fine (see pforth float
+  notes below).
+- **Sine-wave text scroller**: each character of a message printed individually
+  (`PRINT` with `u`=1 via a 1-byte buffer) at a Y offset from `FSIN`, classic
+  "dancing letters".
+- **Arrow-key live controls**: Up/Down adjust `parallax-target` (0..3, capped
+  — higher felt "too fast"), Left/Right adjust `spin-target` (-4..4, 0 freezes
+  the cubes, negative reverses them; only visible while the squares are shown,
+  i.e. when the ball spiral is OFF). The actual `parallax-speed`/`spin-speed`
+  (both `fvariable`s) exponentially ease toward their targets each frame
+  (`ease!`, rate 0.05 ≈ 1s to settle), so a key press ramps the star-scroll/
+  cube-rotation speed in smoothly instead of snapping it. `spin-speed` is the
+  per-frame increment of a float `cube-time` accumulator that drives the
+  cubes' orbit/spin angles (`angle` truncates it to integer degrees via
+  `f>s`). Using an accumulator (not `frame @ * mult`) avoids angle jumps when
+  the speed changes. `BTNP id 10 6` gives a tap-to-step / hold-to-repeat feel.
+- **Button B — reset**: `5 -1 -1 btnp` (pure edge-detect, no repeat) →
+  `reset-controls`, sets `spin-target`/`parallax-target` back to their
+  defaults (1); the eased speeds then ease back toward 1 over ~1s like any
+  other target change.
+
+Music is planned as a follow-up addition to this cart.
+
+**Testing gamepad buttons A/B in headless Xvfb**: on this build, `xdotool key
+z`/`x` (the documented default keyboard mapping for buttons A/B) do NOT
+register as `BTN`/`BTNP` bits 4/5 — `tic_sys_default_mapping`'s
+`SDL_GetKeyFromScancode` resolves differently in this Xvfb session (plain
+`pc+us+inet(evdev)` keymap per `setxkbmap -print`). Empirically, only `q`
+(→ bit 6) and `s` (→ bit 7) reliably toggle gamepad bits via keyboard here.
+To test button-A/B-gated logic headlessly, temporarily swap the `btnp` index
+(4→6, 5→7) in `handle-input`, test with `q`/`s`, then revert — do not ship
+with non-standard indices.
+
 ### pfdicdat.h — auto-bootstrapped dictionary
 
 **pfdicdat.h is NOT committed** — `cmake/forth.cmake` always regenerates it at cmake configure time by building pforth natively on the host. This guarantees the dictionary stays in sync with the pinned pforth submodule and avoids 32-bit/64-bit mismatches.
