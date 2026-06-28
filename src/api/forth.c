@@ -22,11 +22,12 @@
 
 // Forth language integration for TIC-80 using pForth.
 //
-// This file serves two roles:
-//   1. Replacement for pForth's pfcustom.c: defines CustomFunctionTable[] and
+// This file serves three roles:
+//   1. pforth I/O layer: routes pforth output to TIC-80 trace, stubs file I/O.
+//   2. Replacement for pForth's pfcustom.c: defines CustomFunctionTable[] and
 //      CompileCustomFunctions() which register TIC-80 API words in the Forth
 //      dictionary.
-//   2. TIC-80 tic_script implementation: lifecycle (init/close/tick/boot/etc.)
+//   3. TIC-80 tic_script implementation: lifecycle (init/close/tick/boot/etc.)
 //      and the exported tic_script descriptor.
 //
 // Stack convention used by all wrappers:
@@ -52,11 +53,100 @@
 
 extern bool parse_note(const char* noteStr, s32* note, s32* octave);
 
-// I/O helpers declared in forth_io.c
-extern void        forthInitIO(tic_tick_data* tickData);
-extern void        forthTermIO(void);
-extern const char* forthGetOutputBuffer(void);
-extern void        forthClearOutputBuffer(void);
+// =============================================================================
+// pforth I/O layer
+//
+// Routes all pforth terminal output to the TIC-80 trace callback.
+// File I/O is stubbed out (not needed for cartridge execution).
+// =============================================================================
+
+#define FORTH_IO_BUF 256
+
+static char           gOutBuf[FORTH_IO_BUF];
+static int            gOutLen   = 0;
+static tic_tick_data* gTickData = NULL;
+
+static void flushOut(void)
+{
+    if (gOutLen > 0 && gTickData && gTickData->trace)
+    {
+        gOutBuf[gOutLen] = '\0';
+        gTickData->trace(gTickData->data, gOutBuf, 15);
+        gOutLen = 0;
+    }
+}
+
+static void forthInitIO(tic_tick_data* tickData)
+{
+    gTickData = tickData;
+    gOutLen   = 0;
+}
+
+static void forthTermIO(void)
+{
+    flushOut();
+    gTickData = NULL;
+}
+
+// Returns buffered output as a C string; used for error reporting.
+static const char* forthGetOutputBuffer(void)
+{
+    gOutBuf[gOutLen] = '\0';
+    return gOutBuf;
+}
+
+static void forthClearOutputBuffer(void)
+{
+    gOutLen = 0;
+}
+
+static void forthFlushOutput(void)
+{
+    flushOut();
+}
+
+// ---- pforth terminal I/O callbacks ------------------------------------------
+
+int sdTerminalOut(char c)
+{
+    if (gOutLen < FORTH_IO_BUF - 1)
+        gOutBuf[gOutLen++] = c;
+
+    if (c == '\n' || gOutLen >= FORTH_IO_BUF - 1)
+        flushOut();
+
+    return 0;
+}
+
+int sdTerminalEcho(char c)
+{
+    return sdTerminalOut(c);
+}
+
+int sdTerminalIn(void)
+{
+    return -1;
+}
+
+int sdTerminalFlush(void)
+{
+    flushOut();
+    return 0;
+}
+
+int sdQueryTerminal(void)
+{
+    return 0;
+}
+
+void sdTerminalInit(void) {}
+void sdTerminalTerm(void) {}
+
+cell_t sdSleepMillis(cell_t msec)
+{
+    (void)msec;
+    return 0;
+}
 
 // =============================================================================
 // Global state
@@ -701,6 +791,7 @@ static cell_t tic_forth_ffts(void)
     return (cell_t)(s32)(v * 65535.0);
 }
 
+
 // =============================================================================
 // pForth custom function table
 //
@@ -739,7 +830,7 @@ CFunc0 CustomFunctionTable[] =
     (CFunc0)tic_forth_pmem_set,     // 26  PMEM!
     (CFunc0)tic_forth_time,         // 27  TIME
     (CFunc0)tic_forth_tstamp,       // 28  TSTAMP
-    (CFunc0)tic_forth_exit,         // 29  EXIT
+    (CFunc0)tic_forth_exit,         // 29  EXITGAME (Forth word; C API is exit)
     (CFunc0)tic_forth_font,         // 30  FONT
     (CFunc0)tic_forth_mouse,        // 31  MOUSE
     (CFunc0)tic_forth_circ,         // 32  CIRC
@@ -756,7 +847,7 @@ CFunc0 CustomFunctionTable[] =
     (CFunc0)tic_forth_sync,         // 43  SYNC
     (CFunc0)tic_forth_vbank,        // 44  VBANK
     (CFunc0)tic_forth_reset,        // 45  RESET
-    (CFunc0)tic_forth_key,          // 46  KEY
+    (CFunc0)tic_forth_key,          // 46  KEYPRESSED (Forth word; C API is key)
     (CFunc0)tic_forth_keyp,         // 47  KEYP
     (CFunc0)tic_forth_fget,         // 48  FGET
     (CFunc0)tic_forth_fset,         // 49  FSET
@@ -800,7 +891,10 @@ Err CompileCustomFunctions(void)
     if (CreateGlueToC("PMEM!",  i++, C_RETURNS_VOID,  0) < 0) return -1;
     if (CreateGlueToC("TIME",   i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("TSTAMP", i++, C_RETURNS_VALUE, 0) < 0) return -1;
-    if (CreateGlueToC("EXIT",   i++, C_RETURNS_VOID,  0) < 0) return -1;
+    // Renamed from "EXIT": EXIT is a core Forth word (return from the current
+    // definition). Binding the TIC-80 quit-to-console API to that name shadowed
+    // it, so any "... IF ... EXIT THEN ..." early-return silently quit the cart.
+    if (CreateGlueToC("EXITGAME", i++, C_RETURNS_VOID,  0) < 0) return -1;
     if (CreateGlueToC("FONT",   i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("MOUSE",  i++, C_RETURNS_VOID,  0) < 0) return -1;
     if (CreateGlueToC("CIRC",   i++, C_RETURNS_VOID,  0) < 0) return -1;
@@ -817,7 +911,9 @@ Err CompileCustomFunctions(void)
     if (CreateGlueToC("SYNC",   i++, C_RETURNS_VOID,  0) < 0) return -1;
     if (CreateGlueToC("VBANK",  i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("RESET",  i++, C_RETURNS_VOID,  0) < 0) return -1;
-    if (CreateGlueToC("KEY",    i++, C_RETURNS_VALUE, 0) < 0) return -1;
+    // Renamed from "KEY": KEY is a standard Forth word (read one character of
+    // input). Use KEYPRESSED for TIC-80's "is this key down?" query.
+    if (CreateGlueToC("KEYPRESSED", i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("KEYP",   i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("FGET",   i++, C_RETURNS_VALUE, 0) < 0) return -1;
     if (CreateGlueToC("FSET",   i++, C_RETURNS_VOID,  0) < 0) return -1;
@@ -865,9 +961,15 @@ static void checkStackBalance(tic_core* core, cell_t before, const char* name)
     if (after != before && core->data)
     {
         char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "Forth: stack imbalance in %s (depth %ld -> %ld)",
-                 name, (long)before, (long)after);
+        cell_t delta = after - before;
+        if (delta > 0)
+            snprintf(buf, sizeof(buf),
+                     "Forth: stack overflow in %s (%ld extra item%s left)",
+                     name, (long)delta, delta == 1 ? "" : "s");
+        else
+            snprintf(buf, sizeof(buf),
+                     "Forth: stack underflow in %s (%ld item%s missing)",
+                     name, (long)-delta, -delta == 1 ? "" : "s");
         core->data->error(core->data->data, buf);
         // Discard leftover stack items to avoid cascading errors.
         while (pfGetStackDepth() > before)
@@ -976,10 +1078,6 @@ static bool initForth(tic_mem* tic, const char* code)
 
     return true;
 }
-
-// Flush any output left in the I/O buffer (e.g. from '.' without CR) at the
-// end of each TIC frame so it appears promptly in the console.
-extern void forthFlushOutput(void);
 
 static void callForthTick(tic_mem* tic)
 {
@@ -1104,11 +1202,11 @@ static const char* ForthAPIKeywords[] = {
     "CLS", "PRINT", "PIX", "PIX!", "LINE", "RECT", "RECTB",
     "SPR", "BTN", "BTNP", "SFX", "MAP", "MGET", "MSET",
     "PEEK", "POKE", "PEEK1", "POKE1", "PEEK2", "POKE2", "PEEK4", "POKE4",
-    "MEMCPY", "MEMSET", "TRACE", "PMEM", "PMEM!", "TIME", "TSTAMP", "EXIT",
+    "MEMCPY", "MEMSET", "TRACE", "PMEM", "PMEM!", "TIME", "TSTAMP", "EXITGAME",
     "FONT", "MOUSE", "CIRC", "CIRCB", "ELLI", "ELLIB", "PAINT",
     "TRI", "TRIB", "TTRI", "CLIP", "CLIP0",
     "MUSIC", "SYNC", "VBANK", "RESET",
-    "KEY", "KEYP", "FGET", "FSET", "FFT", "FFTS",
+    "KEYPRESSED", "KEYP", "FGET", "FSET", "FFT", "FFTS",
 };
 
 // =============================================================================
@@ -1119,7 +1217,10 @@ static const u8 DemoRom[] =
     #include "../build/assets/forthdemo.tic.dat"
 };
 
-static const u8 MarkRom[] = { 0 };
+static const u8 MarkRom[] =
+{
+    #include "../build/assets/forthmark.tic.dat"
+};
 
 // =============================================================================
 // tic_script descriptor
@@ -1163,5 +1264,5 @@ TIC_EXPORT const tic_script EXPORT_SCRIPT(Forth) =
     .api_keywordsCount = COUNT_OF(ForthAPIKeywords),
 
     .demo = { DemoRom, sizeof DemoRom, "forthdemo.tic" },
-    .mark = { MarkRom, 0, "forthmark.tic" },
+    .mark = { MarkRom, sizeof MarkRom, "forthmark.tic" },
 };
