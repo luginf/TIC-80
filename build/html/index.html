@@ -43,7 +43,31 @@
     </div>
 
     <script type="text/javascript">
-        var Module = {canvas: document.getElementById('canvas')};
+        var Module = {
+            canvas: document.getElementById('canvas'),
+            preRun: [function() {
+                // After IDBFS populates, copy any /preloaded/* files into the TIC-80 directory.
+                // --preload-file must target /preloaded/<name> to avoid being shadowed by IDBFS.
+                const originalSyncfs = FS.syncfs.bind(FS);
+                FS.syncfs = function(populate, callback) {
+                    return originalSyncfs(populate, function(err) {
+                        if (populate) {
+                            try {
+                                const dir = '/com.nesbox.tic/TIC-80';
+                                FS.mkdirTree(dir);
+                                FS.readdir('/preloaded').forEach(function(name) {
+                                    if (name === '.' || name === '..') return;
+                                    const data = FS.readFile('/preloaded/' + name);
+                                    FS.writeFile(dir + '/' + name, data);
+                                    console.log('Injected preloaded cart:', name);
+                                });
+                            } catch(e) { console.warn('preloaded inject:', e); }
+                        }
+                        if (callback) callback(err);
+                    });
+                };
+            }]
+        };
 
         // Safari/WebKit-only: remap Arrow keys with location 3 (numpad) to location 0.
         (function(){
