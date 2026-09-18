@@ -2190,11 +2190,13 @@ static void exportGame(Console* console, const char* name, const char* system, n
     GameExportData data = {console};
     strcpy(data.filename, name);
 
-    // the release tag, the one name every path on the site uses: a dev
-    // build takes its version from the last release, while a directory
-    // named after its own 1.2.<commits>-dev was a 404 on every export
-    // (12.09: those 404s are in the prod access log).
-    char url[TICNAME_MAX] = "/export/" TIC_VERSION_TAG "/";
+    // The directory this build's assets live in: a release asks for its tag
+    // on tic80.com, a snapshot for its line (1.3) on dev.tic80.com. The two
+    // sites lay out what their own builds ask for, so this is a lookup in a
+    // directory that exists either way — a version of its own, "1.2.<commits>
+    // -dev", was a 404 on every export (12.09: those 404s are in the prod
+    // access log).
+    char url[TICNAME_MAX] = "/export/" TIC_VERSION_DIR "/";
     strcat(url, system);
 
 #if defined(TIC80_PRO)
@@ -2205,8 +2207,81 @@ static void exportGame(Console* console, const char* name, const char* system, n
     tic_net_get(console->net, url, callback, MOVE(data));
 }
 
+static bool canExportNativeFromLocalTemplate(const char* system)
+{
+#if defined(__TIC_WINDOWS__)
+    return strcmp(system, "win") == 0;
+#elif defined(__TIC_LINUX__)
+    return strcmp(system, "linux") == 0;
+#elif defined(__TIC_MACOSX__)
+    return strcmp(system, "mac") == 0;
+#else
+    return false;
+#endif
+}
+
+// Same-platform native export prefers the local executable template.
+// If the local template is not applicable or unavailable, caller falls back to server export.
+static bool tryExportNativeFromLocalTemplate(Console* console, const char* name, const char* system)
+{
+    if(!canExportNativeFromLocalTemplate(system))
+        return false;
+
+    const char* appPath = fs_apppath();
+
+    if(!appPath)
+        return false;
+
+    s32 appSize = 0;
+    u8* app = fs_read(appPath, &appSize);
+
+    if(!app)
+        return false;
+
+    if(appSize <= 0)
+    {
+        free(app);
+        return false;
+    }
+
+    bool success = false;
+
+    SCOPE(free(app))
+    {
+        s32 size = appSize;
+        void* buf = embedCart(console, app, &size);
+
+        if(buf) SCOPE(free(buf))
+        {
+            const char* path = tic_fs_path(console->fs, name);
+
+            success = fs_write(path, buf, size);
+
+            if(success)
+            {
+                chmod(path, DEFAULT_CHMOD);
+
+                printLine(console);
+                printBack(console, "\nusing local native template...");
+                onFileExported(console, name, true);
+            }
+        }
+    }
+
+    return success;
+}
+
 static inline void exportNativeGame(Console* console, const char* name, const char* system, ExportParams params)
 {
+    if(tryExportNativeFromLocalTemplate(console, name, system))
+        return;
+
+    if(canExportNativeFromLocalTemplate(system))
+    {
+        printLine(console);
+        printBack(console, "\nlocal native template failed, using server template...");
+    }
+
     exportGame(console, name, system, onNativeExportGet, params);
 }
 
@@ -2398,15 +2473,11 @@ static void onHtmlExportGet(const net_get_data* data)
             memcpy(exportData->stub, data->done.data, data->done.size);
             exportData->stubSize = data->done.size;
 
-            // the page ships beside the stubs, under the release name: a
-            // dev build's own version (1.2.<commits>-dev) names no directory
-            // the site ever deploys, while /export/<major>.<minor>/ is what
-            // deploy-client.sh lays down for every build
-            // the site's own page, the one and only: fetched from /js/<tag>/
-            // — the player's own directory, under the release tag — rewritten
-            // for the game, and written into the zip as index.html, which is
-            // the name a host serves.
-            char url[TICNAME_MAX] = "/js/" TIC_VERSION_TAG "/index.html";
+            // the site's own page, the one and only: fetched from the player's
+            // directory on this build's site — /js/<dir>/, the same directory
+            // the stubs come from — rewritten for the game, and written into
+            // the zip as index.html, which is the name a host serves.
+            char url[TICNAME_MAX] = "/js/" TIC_VERSION_DIR "/index.html";
             tic_net_get(console->net, url, onHtmlPageGet, exportData);
         }
         break;
@@ -3965,6 +4036,8 @@ static const struct LangRuntimeVersion
     {"wasm",     TIC_RUNTIME_VERSION_WASM},
     {"janet",    TIC_RUNTIME_VERSION_JANET},
     {"python",   TIC_RUNTIME_VERSION_PYTHON},
+    {"miniscript", TIC_RUNTIME_VERSION_MINISCRIPT},
+    {"forth",    TIC_RUNTIME_VERSION_FORTH},
     {NULL, NULL},
 };
 
@@ -4008,7 +4081,9 @@ static void onHelp_version(Console* console)
 
     FOREACH_LANG(script)
     {
-        sprintf(buf, " %-8s %s\n", script->name, getLangRuntimeVersion(script));
+        // %-10s: the widest name is "miniscript"; a narrower field pushes
+        // its version out of the column the others line up in
+        sprintf(buf, " %-10s %s\n", script->name, getLangRuntimeVersion(script));
         printBack(console, buf);
     }
 }

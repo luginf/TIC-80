@@ -2,20 +2,18 @@
 #
 # A build whose HEAD points exactly at a "vMAJOR.MINOR.PATCH" tag is a
 # release: it carries that version verbatim (empty VERSION_STATUS). Any
-# other build is a development snapshot — it keeps the last release's
-# major/minor and uses the commit count as the patch, suffixed "-dev", so
-# the version stays monotonic without needing a tag.
+# other build is a development snapshot — it reports the line the repository
+# is on, below, with the commit count as the patch, suffixed "-dev". A
+# snapshot therefore says which line it belongs to without waiting for the
+# next release to be tagged, and stays monotonic while it does.
 
+# The line under development. A snapshot reports it, and a tree with no git
+# reports it verbatim — see the no-git note further down. Bump it in the
+# commit after a release: v1.2.0 shipped, so main is on the 1.3 line.
 set(VERSION_MAJOR 1)
-set(VERSION_MINOR 2)
+set(VERSION_MINOR 3)
 set(VERSION_REVISION 0)
 set(VERSION_STATUS "-dev")
-
-# The release tag, "v<major>.<minor>.<revision>", and the string every path
-# is built from — /js/<tag>/, /export/<tag>/. A dev build takes the tag of
-# the last release, so a snapshot asks for assets that exist instead of a
-# directory named after its own 1.2.<commits>-dev version.
-set(VERSION_TAG "v${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REVISION}")
 
 string(TIMESTAMP VERSION_YEAR "%Y")
 
@@ -23,10 +21,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(VERSION_BUILD ".dbg")
 endif()
 
-# A build with no git at all — a source tarball, a distro recipe — cannot be
-# a snapshot of anything, and the fallback literals above are a release's, so
-# it is treated as one: TIC_HOST stays tic80.com instead of sending a shipped
-# build at the dev site. A git checkout overrides this below.
+# A build with no git at all — a source archive, a distro recipe — cannot be
+# a snapshot of anything: it reports the literals above as they stand, as a
+# release, so TIC_HOST stays tic80.com instead of sending a shipped build at
+# the dev site. Its asset directory follows the same literals, so an archive
+# of main asks for /js/v1.3.0/ and /export/v1.3.0/ before that release exists
+# — the price of one number carrying both the line under development and this
+# fallback. An archive of a release tag carries that tag's literals and asks
+# for exactly its own. A git checkout overrides this below.
 set(VERSION_IS_RELEASE TRUE)
 
 find_package(Git)
@@ -68,7 +70,6 @@ if(Git_FOUND)
             set(VERSION_REVISION ${CMAKE_MATCH_3})
             set(VERSION_STATUS "")
             set(VERSION_IS_RELEASE TRUE)
-            set(VERSION_TAG "v${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REVISION}")
         else()
             set(VERSION_IS_RELEASE FALSE)
 
@@ -76,26 +77,6 @@ if(Git_FOUND)
             # Guarded like the calls above: a repository may still fail these
             # (a shallow or partial clone), in which case we keep the fallback
             # 0 rather than leaving the patch empty.
-            #
-            # Track the last release's major/minor so a post-release commit
-            # never reports an *older* version than the tag it follows (e.g.
-            # 1.2.<n>-dev right after v1.3.0). Falls back to the defaults when
-            # no tag exists.
-            execute_process(
-                COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 HEAD
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE GIT_LAST_TAG
-                ERROR_QUIET
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                RESULT_VARIABLE GIT_LAST_TAG_RESULT
-            )
-            if(GIT_LAST_TAG_RESULT EQUAL 0 AND GIT_LAST_TAG MATCHES "^v([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
-                set(VERSION_MAJOR ${CMAKE_MATCH_1})
-                set(VERSION_MINOR ${CMAKE_MATCH_2})
-                # the assets a snapshot talks to are the last release's
-                set(VERSION_TAG "${GIT_LAST_TAG}")
-            endif()
-
             execute_process(
                 COMMAND ${GIT_EXECUTABLE} rev-list HEAD --count
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -120,10 +101,24 @@ if(VERSION_IS_RELEASE)
     set(VERSION_STATUS "")
 endif()
 
-# The C code branches on this: a dev snapshot talks to the dev site and asks
-# it for the release-style paths (see system.h TIC_HOST).
+# The C code branches on this: a dev snapshot talks to the dev site, a release
+# to production (see system.h TIC_HOST).
 if(VERSION_IS_RELEASE)
     set(VERSION_IS_RELEASE_C 1)
 else()
     set(VERSION_IS_RELEASE_C 0)
+endif()
+
+# The directory this build's assets live in on the site it talks to —
+# /js/<dir>/, /export/<dir>/. Each site lays out the names its own builds ask
+# for, and both sides follow from this build alone: a release asks for its tag
+# (v1.3.0), which production lays out when that release is deployed, and a
+# snapshot asks for the line it is on (1.3), which the dev instance keeps up
+# to date from snapshots of main. Nothing here looks at what has been
+# released, so a snapshot's export carries the snapshot's engine rather than
+# the last release's — which is the whole point of exporting from dev.
+if(VERSION_IS_RELEASE)
+    set(VERSION_DIR "v${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REVISION}")
+else()
+    set(VERSION_DIR "${VERSION_MAJOR}.${VERSION_MINOR}")
 endif()
