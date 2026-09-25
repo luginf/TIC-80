@@ -197,3 +197,7 @@ build/*.map
 *.3dsx
 *.smdh
 perso/
+# the Forth dictionary bootstrap cmake/forth.cmake builds under the build
+# directory to generate pfdicdat.h
+build/pforth_bootstrap/
+build/pforth_bootstrap_src/

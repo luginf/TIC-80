@@ -253,7 +253,7 @@ if(BUILD_SDL)
         # Carcassonne (#1948) is the cart that found this: its Wren source
         # compiles deep enough to pass 64K, and the damage surfaced later as an
         # unrelated crash in SDL's mouse handling.
-        set_target_properties(${TIC80_TARGET} PROPERTIES LINK_FLAGS "-s WASM=1 -s USE_SDL=2 -s ALLOW_MEMORY_GROWTH=1 -s FETCH=1 -s STACK_SIZE=4194304 --pre-js ${CMAKE_SOURCE_DIR}/build/html/prejs.js -lidbfs.js")
+        set_target_properties(${TIC80_TARGET} PROPERTIES LINK_FLAGS "-s WASM=1 -s USE_SDL=2 -s ALLOW_MEMORY_GROWTH=1 -s FETCH=1 -s STACK_SIZE=4194304 -s EXPORTED_FUNCTIONS=_main,_malloc,_free --pre-js ${CMAKE_SOURCE_DIR}/build/html/prejs.js -lidbfs.js")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -s USE_SDL=2")
 
         if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -307,11 +307,13 @@ if(BUILD_SDL)
 
         SET(TIC80_DESKTOP_DIR     "share/applications/")
         SET(TIC80_MIME_DIR        "share/mime/packages/")
-        SET(TIC80_PIXMAPS_DIR     "share/icons/")
+        SET(TIC80_PIXMAPS_DIR     "share/icons/hicolor/256x256/apps")
+        SET(TIC80_MIMETYPE_ICON_DIR "share/icons/hicolor/256x256/mimetypes")
 
         install (FILES ${PROJECT_SOURCE_DIR}/build/linux/tic80.desktop DESTINATION ${TIC80_DESKTOP_DIR})
         install (FILES ${PROJECT_SOURCE_DIR}/build/linux/tic80.xml DESTINATION ${TIC80_MIME_DIR})
         install (FILES ${PROJECT_SOURCE_DIR}/build/linux/tic80.png DESTINATION ${TIC80_PIXMAPS_DIR})
+        install (FILES ${PROJECT_SOURCE_DIR}/build/linux/tic80.png DESTINATION ${TIC80_MIMETYPE_ICON_DIR} RENAME application-x-tic80-item.png)
 
     endif()
 endif()

@@ -154,6 +154,15 @@ struct Studio
     struct
     {
         MouseState state[3];
+#if defined(BUILD_RENDER_CACHE)
+        struct
+        {
+            s32 x, y;
+            tic_cursor sprite;
+            bool system;
+            bool visible;
+        } prev;
+#endif
     } mouse;
 
 #if defined(BUILD_EDITORS) || defined(BUILD_SURF)
@@ -2121,6 +2130,13 @@ static void reloadConfirm(Studio* studio, bool yes, void* data)
 
 static void checkChanges(Studio* studio)
 {
+    static u32 tick_count = 0;
+    tick_count++;
+    if (tick_count < 30) {
+        return;
+    }
+    tick_count = 0;
+
     switch(studio->mode)
     {
     case TIC_START_MODE:
@@ -2378,6 +2394,9 @@ void studioConfigChanged(Studio* studio)
 #endif
 
     updateSystemFont(studio);
+#if defined(BUILD_RENDER_CACHE)
+    tic_core_draw_cache_set_enabled(studio->tic, studio->config->data.options.drawCache);
+#endif
     tic_sys_update_config();
 }
 
@@ -2482,6 +2501,8 @@ static void doCodeImport(Studio* studio)
                     s32 x = atoi(start);
                     s32 y = atoi(sep + 1);
 
+                    s32 offset = end - code.data + 1;
+                    memcpy(studio->code->src, code.data + offset, sizeof(tic_code) - offset);
                     if(x == 0 && y == 0)
                     {
                         if(studio->mode != TIC_RUN_MODE)
@@ -2489,8 +2510,6 @@ static void doCodeImport(Studio* studio)
                     }
                     else
                     {
-                        s32 offset = end - code.data + 1;
-                        memcpy(studio->code->src, code.data + offset, sizeof(tic_code) - offset);
                         codeSetPos(studio->code, x - 1, y - 1);
 
                         if(studio->mode == TIC_RUN_MODE)
@@ -2605,6 +2624,26 @@ void studio_tick(Studio* studio, tic80_input input)
             tic->ram->font = studio->systemFont;
         }
 
+#if defined(BUILD_RENDER_CACHE)
+        tic80_mouse* m = &tic->ram->input.mouse;
+        bool mouse_visible = (tic->input.mouse && !m->relative && (s32)m->x < TIC80_FULLWIDTH && (s32)m->y < TIC80_FULLHEIGHT && m->x >= 0 && m->y >= 0);
+        if (mouse_visible || studio->mouse.prev.visible)
+        {
+            if (m->x != studio->mouse.prev.x || m->y != studio->mouse.prev.y ||
+                tic->ram->vram.vars.cursor.sprite != studio->mouse.prev.sprite ||
+                tic->ram->vram.vars.cursor.system != studio->mouse.prev.system ||
+                mouse_visible != studio->mouse.prev.visible)
+            {
+                tic_core_invalidate(tic);
+                studio->mouse.prev.x = m->x;
+                studio->mouse.prev.y = m->y;
+                studio->mouse.prev.sprite = tic->ram->vram.vars.cursor.sprite;
+                studio->mouse.prev.system = tic->ram->vram.vars.cursor.system;
+                studio->mouse.prev.visible = mouse_visible;
+            }
+        }
+#endif
+
         callback[studio->mode].data
             ? tic_core_blit_ex(tic, callback[studio->mode])
             : tic_core_blit(tic);
@@ -2709,9 +2748,14 @@ void studio_load(Studio* studio, const char* file)
 #endif
 }
 
+// Where a run was entered from decides where CLOSE GAME goes: a cart played in
+// SURF returns to the browser it was opened in, any other run lands in the
+// console as it always has. That origin is runFrom, not prevMode — opening the
+// pause menu over the run makes RUN the previous mode, so prevMode has already
+// forgotten SURF by the time the menu is answered (#3015).
 void exitGame(Studio* studio)
 {
-    if(studio->prevMode == TIC_SURF_MODE)
+    if(studio->runFrom == TIC_SURF_MODE)
     {
         setStudioMode(studio, TIC_SURF_MODE);
     }
@@ -2768,6 +2812,13 @@ void studio_delete(Studio* studio)
     free(studio->fs);
     free(studio);
 }
+
+#if defined(BUILD_RENDER_CACHE)
+bool studio_is_dirty(Studio* studio)
+{
+    return tic_core_is_dirty(studio->tic);
+}
+#endif
 
 #if defined(BUILD_EDITORS)
 Bytebattle* getBytebattle(Studio* studio)
