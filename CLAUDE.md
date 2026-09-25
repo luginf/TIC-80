@@ -47,11 +47,11 @@ TIC_EXPORT const tic_script EXPORT_SCRIPT(Lang) = {
 
 The VM state is stored in `core->currentVM` (`void*` in `src/core/core.h`).
 
-Language IDs currently in use: 10–20. New languages should use 21+.
+Language IDs currently in use: 10–22. New languages should use 23+.
 
 ## Forth integration (this fork)
 
-**Goal**: add Forth as language ID 21 with file extension `.fth`.
+**Goal**: add Forth as language ID 22 (21 is yue's) with file extension `.fth`.
 
 **Chosen library**: [pforth](https://github.com/philburk/pforth) (BSD license, portable C, ~30KB).
 
