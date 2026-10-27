@@ -130,7 +130,7 @@ int main(void)
     tic->ram->persistent.data[9] = 0;
     Script->tick(tic);
     assert(ErrorCount == 1);
-    assert(strstr(Errors, "out of bounds"));
+    assert(strstr(Errors, "Out-of-bounds access in linear memory"));
     Script->tick(tic);
     assert(ErrorCount == 1);
     assert(tic->ram->persistent.data[9] == 0);

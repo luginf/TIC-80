@@ -23,53 +23,42 @@
 // Forth through Lugforth, sandboxed.
 //
 // pForth (src/api/forth.c) runs a cartridge as native code: its @ and ! take
-// the player's own addresses. Here the Forth system is a WebAssembly module
-// (src/api/lugforth/, built in the Lugforth repository) run by wasm3, so every
-// address a cartridge makes is an offset in the module's memory, an access
-// past it traps, and the only ways out of the module are the imports below,
-// which check the addresses they are handed. The words, their names and their
-// stack effects are those of the pForth binding, so its cartridges keep
+// the player's own addresses. Here the Forth system is a WebAssembly module,
+// built in the Lugforth repository and translated to C by wasm2c
+// (vendor/lugforth/): it runs natively, but every address a cartridge makes is
+// an offset in the module's memory, each access is checked against its bounds
+// and traps past them, and the only ways out of the module are the imports
+// below, which check the addresses they are handed. The words, their names and
+// their stack effects are those of the pForth binding, so its cartridges keep
 // working; the two builds are exclusive (the same script id).
 
 #include "core/core.h"
 
-// Avoid redefining u* and s*
-#define d_m3ShortTypesDefined 1
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
-typedef double f64;
+// The core types of wasm2c are TIC-80's own, but for the floats.
+#define WASM_RT_CORE_TYPES_DEFINED 1
 typedef float f32;
+typedef double f64;
 
-#include "wasm3.h"
-#include "m3_env.h"
+#include "lugforth_w2c.h"
+#include "wasm-rt-exceptions.h"
+#include "wasm-rt-impl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-#include "lugforth/tic80_api.h"
+#include "tic80_api.h"
 
-static const u8 LugforthModule[] =
-    {
-#include "lugforth/lugforth-tic80.wasm.h"
-};
+#define LUGFORTH_OUT_SIZE 256
+#define LUGFORTH_STR_SIZE 1024
 
-#define LUGFORTH_STACK_SIZE (64 * 1024)
-// The module grows its memory as the dictionary and ALLOCATE need: 16 MiB at most.
-#define LUGFORTH_MAX_PAGES 256
-#define LUGFORTH_OUT_SIZE  256
-#define LUGFORTH_STR_SIZE  1024
-
-typedef struct
+// The instance of the imports: wasm2c hands it to each of them.
+typedef struct w2c_tic80
 {
     tic_core* core;
-    IM3Environment env;
-    IM3Runtime runtime;
-
-    IM3Function init, alloc, free, eval, find, call, call1, depth;
+    w2c_lugforth module;
+    bool instantiated;
 
     // Execution tokens of the callbacks, looked up after each evaluation.
     s32 tic, boot, scn, bdr, menu;
@@ -85,6 +74,18 @@ typedef struct
     char recent[LUGFORTH_OUT_SIZE];
     s32 recentLen;
 } LugforthVM;
+
+typedef enum
+{
+    Export_init,
+    Export_alloc,
+    Export_free,
+    Export_eval,
+    Export_find,
+    Export_call,
+    Export_call1,
+    Export_depth,
+} Export;
 
 static LugforthVM* getVM(tic_core* core)
 {
@@ -185,15 +186,25 @@ enum
         ApiCount
 };
 
-// Copies a string of the module ( a n ) out, bounded: the API takes C strings.
-static const char* moduleString(IM3Runtime runtime, void* mem, u32 addr, s32 len, char* buf)
+// The memory of the module, little endian as WebAssembly's on the hosts TIC-80
+// runs on. An address and a length from the module are checked against it.
+static u8* moduleBytes(LugforthVM* vm, u32 addr, u32 len)
 {
-    u32 size = m3_GetMemorySize(runtime);
-    if(len < 0 || addr > size || (u32)len > size - addr)
-        return NULL;
+    wasm_rt_memory_t* mem = w2c_lugforth_memory(&vm->module);
+    if(addr > mem->size || len > mem->size - addr)
+        wasm_rt_trap(WASM_RT_TRAP_OOB);
+    return mem->data + addr;
+}
+
+// Copies a string of the module ( a n ) out, bounded: the API takes C strings.
+static const char* moduleString(LugforthVM* vm, u32 addr, s32 len, char* buf)
+{
+    if(len < 0)
+        wasm_rt_trap(WASM_RT_TRAP_OOB);
+    const u8* text = moduleBytes(vm, addr, len);
     if(len >= LUGFORTH_STR_SIZE)
         len = LUGFORTH_STR_SIZE - 1;
-    memcpy(buf, (u8*)mem + addr, len);
+    memcpy(buf, text, len);
     buf[len] = '\0';
     return buf;
 }
@@ -208,30 +219,18 @@ static s32 transparent(s32 colorkey, u8* trans)
 
 // api ( id base n -- results ): runs API word id on the n cells at base, the
 // last one the top of the Forth stack, and writes its results from base.
-static m3ApiRawFunction(lugforth_api)
+u32 w2c_tic80_api(LugforthVM* vm, u32 id, u32 base, u32 n)
 {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, id);
-    m3ApiGetArg(uint32_t, base);
-    m3ApiGetArg(int32_t, n);
-    (void)_ctx;
-
-    LugforthVM* vm = (LugforthVM*)runtime->userdata;
     tic_core* core = vm->core;
     tic_mem* tic = (tic_mem*)core;
 
-    if(id < 0 || id >= ApiCount || n != ApiWords[id].args)
-        m3ApiTrap(m3Err_trapAbort);
+    if(id >= ApiCount || n != (u32)ApiWords[id].args || (base & 3))
+        wasm_rt_trap(WASM_RT_TRAP_UNREACHABLE);
 
     s32 cells = MAX(ApiWords[id].args, ApiWords[id].results);
-    u32 size = m3_GetMemorySize(runtime);
-    if((base & 3) || base > size || (u32)cells * 4 > size - base)
-        m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
-
-    u8* cell = (u8*)_mem + base;
+    u8* cell = moduleBytes(vm, base, cells * 4);
     s32 a[18] = {0};
-    for(s32 i = 0; i < n; i++)
-        a[i] = (s32)m3ApiReadMem32(cell + i * 4);
+    memcpy(a, cell, n * 4);
 
     s32 r[7] = {0};
     s32 results = 0;
@@ -247,9 +246,7 @@ static m3ApiRawFunction(lugforth_api)
             break;
         case Api_PRINT:
         {
-            const char* text = moduleString(runtime, _mem, a[0], a[1], str);
-            if(!text)
-                m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+            const char* text = moduleString(vm, a[0], a[1], str);
             RESULT(core->api.print(tic, text, a[2], a[3], a[4], a[5] != 0, a[6], a[7] != 0));
             break;
         }
@@ -327,9 +324,7 @@ static m3ApiRawFunction(lugforth_api)
             break;
         case Api_TRACE:
         {
-            const char* text = moduleString(runtime, _mem, a[0], a[1], str);
-            if(!text)
-                m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+            const char* text = moduleString(vm, a[0], a[1], str);
             core->api.trace(tic, text, a[2]);
             break;
         }
@@ -350,9 +345,7 @@ static m3ApiRawFunction(lugforth_api)
             break;
         case Api_FONT:
         {
-            const char* text = moduleString(runtime, _mem, a[0], a[1], str);
-            if(!text)
-                m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
+            const char* text = moduleString(vm, a[0], a[1], str);
             trans[0] = (u8)a[4];
             RESULT(core->api.font(tic, text, a[2], a[3], trans, 1, a[5], a[6], a[7] != 0, a[8], a[9] != 0));
             break;
@@ -452,65 +445,37 @@ static m3ApiRawFunction(lugforth_api)
 
 #undef RESULT
 
-    // The memory may have moved if the API ran anything that grew it: it does
-    // not, but the pointer is taken again to be safe.
-    cell = m3_GetMemory(runtime, NULL, 0) + base;
-    for(s32 i = 0; i < results; i++)
-        m3ApiWriteMem32(cell + i * 4, (u32)r[i]);
-
-    m3ApiReturn(results);
+    // An API word never grows the memory of the module, but the bounds are
+    // taken again anyway.
+    memcpy(moduleBytes(vm, base, cells * 4), r, results * 4);
+    return results;
 }
 
 // type ( a n -- ): the text of TYPE.
-static m3ApiRawFunction(lugforth_type)
+void w2c_tic80_type(LugforthVM* vm, u32 addr, u32 len)
 {
-    m3ApiGetArg(uint32_t, addr);
-    m3ApiGetArg(int32_t, len);
-    (void)_ctx;
-
-    LugforthVM* vm = (LugforthVM*)runtime->userdata;
-    u32 size = m3_GetMemorySize(runtime);
-    if(len < 0 || addr > size || (u32)len > size - addr)
-        m3ApiTrap(m3Err_trapOutOfBoundsMemoryAccess);
-
-    const char* text = (const char*)_mem + addr;
-    for(s32 i = 0; i < len; i++)
+    const char* text = (const char*)moduleBytes(vm, addr, len);
+    for(u32 i = 0; i < len; i++)
         putOut(vm, text[i]);
-
-    m3ApiSuccess();
 }
 
-static m3ApiRawFunction(lugforth_ticks)
+u32 w2c_tic80_ticks(LugforthVM* vm)
 {
-    m3ApiReturnType(int32_t);
-    (void)_ctx;
-    (void)_mem;
-
-    LugforthVM* vm = (LugforthVM*)runtime->userdata;
-    m3ApiReturn((int32_t)vm->core->api.time((tic_mem*)vm->core));
+    return (u32)(s32)vm->core->api.time((tic_mem*)vm->core);
 }
 
-#define MATH1(name)                          \
-    static m3ApiRawFunction(lugforth_##name) \
-    {                                        \
-        m3ApiReturnType(double);             \
-        m3ApiGetArg(double, x);              \
-        (void)runtime;                       \
-        (void)_ctx;                          \
-        (void)_mem;                          \
-        m3ApiReturn(name(x));                \
+#define MATH1(name)                             \
+    f64 w2c_tic80_##name(LugforthVM* vm, f64 x) \
+    {                                           \
+        (void)vm;                               \
+        return name(x);                         \
     }
 
-#define MATH2(name)                          \
-    static m3ApiRawFunction(lugforth_##name) \
-    {                                        \
-        m3ApiReturnType(double);             \
-        m3ApiGetArg(double, x);              \
-        m3ApiGetArg(double, y);              \
-        (void)runtime;                       \
-        (void)_ctx;                          \
-        (void)_mem;                          \
-        m3ApiReturn(name(x, y));             \
+#define MATH2(name)                                    \
+    f64 w2c_tic80_##name(LugforthVM* vm, f64 x, f64 y) \
+    {                                                  \
+        (void)vm;                                      \
+        return name(x, y);                             \
     }
 
 MATH1(sin)
@@ -520,53 +485,40 @@ MATH1(log)
 MATH2(atan2)
 MATH2(pow)
 
-static M3Result linkImports(IM3Module module)
-{
-    M3Result result = m3Err_none;
-
-#define LINK(name, sig, fn)                                             \
-    if((result = m3_LinkRawFunction(module, "tic80", name, sig, fn)) && \
-       result != m3Err_functionLookupFailed)                            \
-        return result;
-
-    LINK("api", "i(iii)", &lugforth_api);
-    LINK("type", "v(ii)", &lugforth_type);
-    LINK("ticks", "i()", &lugforth_ticks);
-    LINK("sin", "F(F)", &lugforth_sin);
-    LINK("cos", "F(F)", &lugforth_cos);
-    LINK("exp", "F(F)", &lugforth_exp);
-    LINK("log", "F(F)", &lugforth_log);
-    LINK("atan2", "F(FF)", &lugforth_atan2);
-    LINK("pow", "F(FF)", &lugforth_pow);
-
-#undef LINK
-
-    return m3Err_none;
-}
-
 // =============================================================================
 // Calls into the module
 // =============================================================================
 
-// Runs an export that returns a cell; on a trap, says so and stops the module.
-static bool callModule(LugforthVM* vm, IM3Function fn, s32* ret, const char* what, s32 argc, s32 a, s32 b)
+// Runs an export; on a trap, says so and stops the module.
+static bool callModule(LugforthVM* vm, Export fn, s32* ret, const char* what, s32 a, s32 b)
 {
     if(vm->broken)
         return false;
 
-    M3Result result = argc == 0   ? m3_CallV(fn)
-                      : argc == 1 ? m3_CallV(fn, a)
-                                  : m3_CallV(fn, a, b);
-
-    if(!result && ret)
-        result = m3_GetResultsV(fn, ret);
-
-    if(result)
+    wasm_rt_trap_t trap = wasm_rt_impl_try();
+    if(trap)
     {
         vm->broken = true;
-        reportError(vm, what, result);
+        reportError(vm, what, wasm_rt_strerror(trap));
         return false;
     }
+
+    w2c_lugforth* m = &vm->module;
+    u32 r = 0;
+    switch(fn)
+    {
+        case Export_init: r = w2c_lugforth_lf_init(m); break;
+        case Export_alloc: r = w2c_lugforth_lf_alloc(m, a); break;
+        case Export_free: w2c_lugforth_lf_free(m, a); break;
+        case Export_eval: r = w2c_lugforth_lf_eval(m, a, b); break;
+        case Export_find: r = w2c_lugforth_lf_find(m, a, b); break;
+        case Export_call: r = w2c_lugforth_lf_call(m, a); break;
+        case Export_call1: r = w2c_lugforth_lf_call1(m, a, b); break;
+        case Export_depth: r = w2c_lugforth_lf_depth(m); break;
+    }
+
+    if(ret)
+        *ret = (s32)r;
 
     return true;
 }
@@ -575,15 +527,14 @@ static bool callModule(LugforthVM* vm, IM3Function fn, s32* ret, const char* wha
 static s32 toModule(LugforthVM* vm, const char* text, s32 len)
 {
     s32 addr = 0;
-    if(!callModule(vm, vm->alloc, &addr, "out of memory", 1, len ? len : 1, 0) || !addr)
+    if(!callModule(vm, Export_alloc, &addr, "out of memory", len ? len : 1, 0) || !addr)
         return 0;
 
-    u32 size = 0;
-    u8* mem = m3_GetMemory(vm->runtime, &size, 0);
-    if((u32)addr > size || (u32)len > size - addr)
+    wasm_rt_memory_t* mem = w2c_lugforth_memory(&vm->module);
+    if((u32)addr > mem->size || (u32)len > mem->size - (u32)addr)
         return 0;
 
-    memcpy(mem + addr, text, len);
+    memcpy(mem->data + addr, text, len);
     return addr;
 }
 
@@ -595,8 +546,8 @@ static s32 findWord(LugforthVM* vm, const char* name)
         return 0;
 
     s32 xt = 0;
-    callModule(vm, vm->find, &xt, "find", 2, addr, len);
-    callModule(vm, vm->free, NULL, "free", 1, addr, 0);
+    callModule(vm, Export_find, &xt, "find", addr, len);
+    callModule(vm, Export_free, NULL, "free", addr, 0);
     return xt;
 }
 
@@ -627,9 +578,9 @@ static bool evaluate(LugforthVM* vm, const char* code)
 
     s32 thrown = 0;
     vm->recentLen = 0;
-    bool ok = callModule(vm, vm->eval, &thrown, "evaluate", 2, addr, len);
+    bool ok = callModule(vm, Export_eval, &thrown, "evaluate", addr, len);
     if(ok)
-        callModule(vm, vm->free, NULL, "free", 1, addr, 0);
+        callModule(vm, Export_free, NULL, "free", addr, 0);
 
     if(ok && thrown)
     {
@@ -655,8 +606,8 @@ static void callWord(tic_mem* tic, s32 xt, const char* name, s32 param, bool has
     s32 thrown = 0;
     vm->recentLen = 0;
     bool ok = hasParam
-                  ? callModule(vm, vm->call1, &thrown, name, 2, xt, param)
-                  : callModule(vm, vm->call, &thrown, name, 1, xt, 0);
+                  ? callModule(vm, Export_call1, &thrown, name, xt, param)
+                  : callModule(vm, Export_call, &thrown, name, xt, 0);
 
     if(!ok)
         return;
@@ -670,7 +621,7 @@ static void callWord(tic_mem* tic, s32 xt, const char* name, s32 param, bool has
     }
 
     s32 depth = 0;
-    if(callModule(vm, vm->depth, &depth, "depth", 0, 0, 0) && depth != 0)
+    if(callModule(vm, Export_depth, &depth, "depth", 0, 0) && depth != 0)
     {
         char what[128];
         snprintf(what, sizeof what, "stack %s in %s (%d item%s %s)",
@@ -692,10 +643,8 @@ static void closeLugforth(tic_mem* tic)
     if(vm)
     {
         flushOut(vm);
-        if(vm->runtime)
-            m3_FreeRuntime(vm->runtime);
-        if(vm->env)
-            m3_FreeEnvironment(vm->env);
+        if(vm->instantiated)
+            wasm2c_lugforth_free(&vm->module);
         free(vm);
         core->currentVM = NULL;
     }
@@ -713,56 +662,26 @@ static bool initLugforth(tic_mem* tic, const char* code)
     vm->core = core;
     core->currentVM = vm;
 
-    const char* failed = NULL;
-    M3Result result = m3Err_none;
-    IM3Module module = NULL;
-
-    if(!(vm->env = m3_NewEnvironment()))
-        failed = "cannot create the wasm environment";
-    else if(!(vm->runtime = m3_NewRuntime(vm->env, LUGFORTH_STACK_SIZE, vm)))
-        failed = "cannot create the wasm runtime";
-    else if((result = m3_ParseModule(vm->env, &module, LugforthModule, sizeof LugforthModule)))
-        failed = result;
-    else if((result = m3_LoadModule(vm->runtime, module)))
+    static bool runtimeReady;
+    if(!runtimeReady)
     {
-        m3_FreeModule(module);
-        failed = result;
+        wasm_rt_init();
+        runtimeReady = true;
     }
-    else if((result = linkImports(module)))
-        failed = result;
-    else
-        // The load sets the limit the module declares; ours is lower.
-        vm->runtime->memory.maxPages = MIN(vm->runtime->memory.maxPages, LUGFORTH_MAX_PAGES);
 
-    struct
+    wasm_rt_trap_t trap = wasm_rt_impl_try();
+    if(trap)
     {
-        IM3Function* fn;
-        const char* name;
-    } exports[] =
-        {
-            {&vm->init, "lf_init"},
-            {&vm->alloc, "lf_alloc"},
-            {&vm->free, "lf_free"},
-            {&vm->eval, "lf_eval"},
-            {&vm->find, "lf_find"},
-            {&vm->call, "lf_call"},
-            {&vm->call1, "lf_call1"},
-            {&vm->depth, "lf_depth"},
-        };
-
-    for(s32 i = 0; !failed && i < COUNT_OF(exports); i++)
-        if((result = m3_FindFunction(exports[i].fn, vm->runtime, exports[i].name)))
-            failed = result;
-
-    if(failed)
-    {
-        reportError(vm, "cannot load the Lugforth module", failed);
+        reportError(vm, "cannot load the Lugforth module", wasm_rt_strerror(trap));
         closeLugforth(tic);
         return false;
     }
 
+    wasm2c_lugforth_instantiate(&vm->module, vm);
+    vm->instantiated = true;
+
     s32 ready = -1;
-    if(!callModule(vm, vm->init, &ready, "boot", 0, 0, 0) || ready != 0)
+    if(!callModule(vm, Export_init, &ready, "boot", 0, 0) || ready != 0)
     {
         if(!vm->broken)
             reportError(vm, "the boot of Lugforth failed", NULL);
