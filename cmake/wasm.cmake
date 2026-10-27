@@ -29,29 +29,9 @@ endif()
 
 if(BUILD_WITH_WASM)
 
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Dd_m3LogOutput=0")
-    set(WASM_DIR ${THIRDPARTY_DIR}/wasm3/source)
-    set(WASM_SRC
-        ${WASM_DIR}/m3_bind.c
-        ${WASM_DIR}/m3_code.c
-        ${WASM_DIR}/m3_compile.c
-        ${WASM_DIR}/m3_core.c
-        ${WASM_DIR}/m3_parse.c
-        ${WASM_DIR}/m3_env.c
-        ${WASM_DIR}/m3_exec.c
-        ${WASM_DIR}/m3_function.c
-        ${WASM_DIR}/m3_info.c
-        ${WASM_DIR}/m3_module.c
-    )
+    include(cmake/wasm3.cmake)
 
-    list(APPEND WASM_SRC ${CMAKE_SOURCE_DIR}/src/api/wasm.c)
-
-    add_library(wasm ${TIC_RUNTIME} ${WASM_SRC})
-
-    if(NINTENDO_3DS)
-        # TODO: seems to be broken with gcc 15.1
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DM3_HAS_TAIL_CALL=0")
-    endif()
+    add_library(wasm ${TIC_RUNTIME} ${CMAKE_SOURCE_DIR}/src/api/wasm.c)
 
     if(NOT BUILD_STATIC)
         set_target_properties(wasm PROPERTIES PREFIX "")
@@ -59,11 +39,7 @@ if(BUILD_WITH_WASM)
         target_compile_definitions(wasm INTERFACE TIC_BUILD_WITH_WASM=1)
     endif()
 
-    target_link_libraries(wasm PRIVATE runtime)
-
-    # wasm3's header carries its own warnings; as a system directory it stays
-    # out of ours, and only our sources are compiled in this target anyway.
-    target_include_directories(wasm SYSTEM PUBLIC ${WASM_DIR})
+    target_link_libraries(wasm PRIVATE runtime wasm3)
 
     target_include_directories(wasm
         PRIVATE
